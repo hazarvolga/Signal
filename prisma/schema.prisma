@@ -1,0 +1,228 @@
+// This is your Prisma schema file,
+// learn more about it in the docs: https://pris.ly/d/prisma-schema
+
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "sqlite"
+  url      = "file:./signal.db"
+}
+
+model Organization {
+  id          String   @id @default(cuid())
+  name        String
+  slug        String   @unique
+  logoUrl     String?
+  address     String?
+  timezone    String   @default("UTC")
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+
+  users       User[]
+  contacts    Contact[]
+  lists       List[]
+  segments    Segment[]
+  campaigns   Campaign[]
+  templates   Template[]
+  flows       Flow[]
+  forms       Form[]
+  domains     Domain[]
+  apiKeys     ApiKey[]
+  auditLogs   AuditLog[]
+  customFieldDefinitions CustomFieldDefinition[]
+}
+
+model User {
+  id             String       @id @default(cuid())
+  email          String       @unique
+  name           String
+  role           String       @default("VIEWER") // OWNER, ADMIN, EDITOR, ANALYST, VIEWER
+  organizationId String
+  organization   Organization @relation(fields: [organizationId], references: [id])
+  createdAt      DateTime     @default(now())
+  updatedAt      DateTime     @updatedAt
+}
+
+model Contact {
+  id             String       @id @default(cuid())
+  email          String
+  firstName      String?
+  lastName       String?
+  phone          String?
+  status         String       @default("SUBSCRIBED") // SUBSCRIBED, UNSUBSCRIBED, BOUNCED, COMPLAINED, CLEANED
+  source         String?
+  engagementScore Int         @default(0)
+  customFields   String       @default("{}") // JSON string for SQLite
+  organizationId String
+  organization   Organization @relation(fields: [organizationId], references: [id])
+  createdAt      DateTime     @default(now())
+  updatedAt      DateTime     @updatedAt
+
+  tags           Tag[]
+  listMemberships ListMembership[]
+  events         Event[]
+
+  @@unique([email, organizationId])
+}
+
+model Tag {
+  id        String    @id @default(cuid())
+  name      String
+  contacts  Contact[]
+}
+
+model List {
+  id             String       @id @default(cuid())
+  name           String
+  description    String?
+  organizationId String
+  organization   Organization @relation(fields: [organizationId], references: [id])
+  createdAt      DateTime     @default(now())
+  updatedAt      DateTime     @updatedAt
+
+  memberships    ListMembership[]
+}
+
+model ListMembership {
+  contactId String
+  listId    String
+  contact   Contact @relation(fields: [contactId], references: [id])
+  list      List    @relation(fields: [listId], references: [id])
+
+  @@id([contactId, listId])
+}
+
+model Segment {
+  id             String       @id @default(cuid())
+  name           String
+  rules          String       @default("[]") // JSON string of rule objects
+  organizationId String
+  organization   Organization @relation(fields: [organizationId], references: [id])
+  createdAt      DateTime     @default(now())
+  updatedAt      DateTime     @updatedAt
+}
+
+model Campaign {
+  id             String       @id @default(cuid())
+  name           String
+  subject        String
+  previewText    String?
+  fromName       String
+  fromEmail      String
+  replyTo        String?
+  content        String       @default("") // HTML or Block JSON
+  subjectB       String?
+  contentB       String?
+  testPercentage Int?         @default(20)
+  testDuration   Int?         @default(4)
+  winnerCriteria String?      @default("OPEN_RATE")
+  type           String       @default("REGULAR") // REGULAR, AB, AUTOMATED, TRANSACTIONAL
+  status         String       @default("DRAFT") // DRAFT, SCHEDULED, SENDING, SENT, ARCHIVED
+  timezone       String       @default("UTC")
+  scheduledAt    DateTime?
+  sentAt         DateTime?
+  organizationId String
+  organization   Organization @relation(fields: [organizationId], references: [id])
+  templateId     String?
+  template       Template?    @relation(fields: [templateId], references: [id])
+  createdAt      DateTime     @default(now())
+  updatedAt      DateTime     @updatedAt
+
+  events         Event[]
+}
+
+model Template {
+  id             String       @id @default(cuid())
+  name           String
+  content        String
+  category       String?
+  organizationId String
+  organization   Organization @relation(fields: [organizationId], references: [id])
+  createdAt      DateTime     @default(now())
+  updatedAt      DateTime     @updatedAt
+
+  campaigns      Campaign[]
+}
+
+model Event {
+  id             String   @id @default(cuid())
+  type           String   // SENT, OPEN, CLICK, BOUNCE, COMPLAINT, UNSUBSCRIBE
+  metadata       String   @default("{}") // JSON string for link URLs, etc.
+  campaignId     String?
+  campaign       Campaign? @relation(fields: [campaignId], references: [id])
+  contactId      String
+  contact        Contact  @relation(fields: [contactId], references: [id])
+  timestamp      DateTime @default(now())
+}
+
+model Flow {
+  id             String       @id @default(cuid())
+  name           String
+  status         String       @default("DRAFT") // DRAFT, ACTIVE, PAUSED
+  nodes          String       @default("[]") // JSON string for React Flow nodes
+  edges          String       @default("[]") // JSON string for React Flow edges
+  organizationId String
+  organization   Organization @relation(fields: [organizationId], references: [id])
+  createdAt      DateTime     @default(now())
+  updatedAt      DateTime     @updatedAt
+}
+
+model Form {
+  id             String       @id @default(cuid())
+  name           String
+  config         String       @default("{}") // JSON string for form fields/styles
+  organizationId String
+  organization   Organization @relation(fields: [organizationId], references: [id])
+  createdAt      DateTime     @default(now())
+  updatedAt      DateTime     @updatedAt
+}
+
+model Domain {
+  id             String       @id @default(cuid())
+  domain         String
+  isVerified     Boolean      @default(false)
+  spfRecord      String?
+  dkimRecord     String?
+  dmarcRecord    String?
+  organizationId String
+  organization   Organization @relation(fields: [organizationId], references: [id])
+  createdAt      DateTime     @default(now())
+  updatedAt      DateTime     @updatedAt
+}
+
+model ApiKey {
+  id             String       @id @default(cuid())
+  name           String
+  key            String       @unique
+  scopes         String       @default("[]") // JSON string of scopes
+  organizationId String
+  organization   Organization @relation(fields: [organizationId], references: [id])
+  createdAt      DateTime     @default(now())
+  lastUsedAt     DateTime?
+}
+
+model AuditLog {
+  id             String       @id @default(cuid())
+  action         String
+  entityType     String
+  entityId       String
+  userId         String?
+  organizationId String
+  organization   Organization @relation(fields: [organizationId], references: [id])
+  timestamp      DateTime     @default(now())
+}
+
+model CustomFieldDefinition {
+  id             String       @id @default(cuid())
+  name           String
+  key            String
+  type           String       @default("TEXT") // TEXT, NUMBER, DATE, BOOLEAN
+  organizationId String
+  organization   Organization @relation(fields: [organizationId], references: [id])
+  createdAt      DateTime     @default(now())
+  updatedAt      DateTime     @updatedAt
+
+  @@unique([key, organizationId])
+}

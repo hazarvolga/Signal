@@ -1,0 +1,115 @@
+@import url('https://fonts.googleapis.com/css2?family=Cormorant+Garamond:ital,wght@0,300;0,400;0,500;0,600;0,700;1,300;1,400;1,500;1,600;1,700&family=Playfair+Display:ital,wght@0,400;0,500;0,600;0,700;0,800;0,900;1,400;1,500;1,600;1,700;1,800;1,900&family=Libre+Franklin:ital,wght@0,100;0,200;0,300;0,400;0,500;0,600;0,700;0,800;0,900;1,100;1,200;1,300;1,400;1,500;1,600;1,700;1,800;1,900&family=Source+Serif+4:ital,opsz,wght@0,8..60,200;0,8..60,300;0,8..60,400;0,8..60,500;0,8..60,600;0,8..60,700;0,8..60,800;0,8..60,900;1,8..60,200;1,8..60,300;1,8..60,400;1,8..60,500;1,8..60,600;1,8..60,700;1,8..60,800;1,8..60,900&family=Courier+Prime:ital,wght@0,400;0,700;1,400;1,700&display=swap');
+@import "tailwindcss";
+
+@theme {
+  --font-serif: "Playfair Display", serif;
+  --font-editorial: "Cormorant Garamond", serif;
+  --font-sans: "Libre Franklin", sans-serif;
+  --font-body: "Source Serif 4", serif;
+  --font-mono: "Courier Prime", monospace;
+
+  --color-bg: #F5F2EC;
+  --color-ink: #1A1814;
+  --color-burgundy: #8B1A1A;
+  --color-brass: #C9A84C;
+  --color-surface: #EDE9E1;
+  --color-border-hairline: #D4CFC6;
+  
+  --color-status-success: #2D5A27;
+  --color-status-scheduled: #3A4A6B;
+  --color-status-warning: #9B4A1A;
+  --color-status-draft: #4A4A4A;
+}
+
+@layer base {
+  body {
+    @apply bg-bg text-ink font-body selection:bg-burgundy selection:text-white;
+    position: relative;
+  }
+
+  body::before {
+    content: "";
+    position: fixed;
+    top: 0;
+    left: 0;
+    width: 100%;
+    height: 100%;
+    pointer-events: none;
+    opacity: 0.05;
+    z-index: 9999;
+    background-image: url("data:image/svg+xml,%3Csvg viewBox='0 0 200 200' xmlns='http://www.w3.org/2000/svg'%3E%3Cfilter id='noiseFilter'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='0.65' numOctaves='3' stitchTiles='stitch'/%3E%3C/filter%3E%3Crect width='100%25' height='100%25' filter='url(%23noiseFilter)'/%3E%3C/svg%3E");
+  }
+
+  h1, h2, h3, h4, h5, h6 {
+    @apply font-serif tracking-tight;
+  }
+
+  hr {
+    @apply border-border-hairline border-t-[0.5px];
+  }
+}
+
+@layer components {
+  .btn-primary {
+    @apply bg-burgundy text-white px-6 py-2 font-sans font-bold uppercase tracking-widest text-xs transition-all hover:opacity-90 active:scale-95;
+  }
+  
+  .btn-secondary {
+    @apply border border-burgundy text-burgundy px-6 py-2 font-sans font-bold uppercase tracking-widest text-xs transition-all hover:bg-burgundy hover:text-white active:scale-95;
+  }
+
+  .newspaper-grid {
+    @apply grid grid-cols-12 gap-6;
+  }
+
+  .masthead-link {
+    @apply font-sans font-bold uppercase tracking-widest text-[10px] text-ink/60 hover:text-burgundy transition-colors relative;
+  }
+
+  .masthead-link.active {
+    @apply text-burgundy;
+  }
+
+  .masthead-link::after {
+    content: "";
+    @apply absolute -bottom-1 left-0 w-0 h-[1px] bg-burgundy transition-all duration-300;
+  }
+
+  .masthead-link:hover::after, .masthead-link.active::after {
+    @apply w-full;
+  }
+
+  .metric-value {
+    @apply font-editorial text-7xl leading-none;
+  }
+
+  .metric-label {
+    @apply font-sans uppercase tracking-widest text-[10px] font-black text-ink/40;
+  }
+
+  .metric-delta {
+    @apply font-mono text-xs;
+  }
+}
+
+/* ReactQuill Custom Styles */
+.ql-container {
+  border-bottom-left-radius: 0;
+  border-bottom-right-radius: 0;
+  font-family: var(--font-body) !important;
+}
+
+.ql-toolbar {
+  border-radius: 0;
+  border-color: var(--color-border-hairline) !important;
+  background-color: var(--color-surface);
+}
+
+.ql-container.ql-snow {
+  border-color: var(--color-border-hairline) !important;
+}
+
+.ql-editor {
+  min-height: 400px;
+  font-size: 1rem;
+}
