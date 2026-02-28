@@ -45,11 +45,76 @@ export interface List {
   createdAt: string;
 }
 
+export interface Product {
+  id: string;
+  externalId?: string;
+  name: string;
+  description?: string;
+  price: number;
+  currency: string;
+  imageUrl?: string;
+  productUrl?: string;
+  source: 'SHOPIFY' | 'WOOCOMMERCE' | 'CUSTOM';
+  organizationId: string;
+  createdAt: string;
+}
+
+export interface Revenue {
+  id: string;
+  amount: number;
+  currency: string;
+  campaignId?: string;
+  flowId?: string;
+  contactId: string;
+  organizationId: string;
+  timestamp: string;
+}
+
+export interface Brand {
+  id: string;
+  name: string;
+  logoUrl?: string;
+  primaryColor?: string;
+  secondaryColor?: string;
+  fontFamily?: string;
+  organizationId: string;
+  createdAt: string;
+}
+
+export interface Integration {
+  id: string;
+  type: 'SHOPIFY' | 'WOOCOMMERCE' | 'ZAPIER' | 'HUBSPOT';
+  status: 'CONNECTED' | 'DISCONNECTED' | 'ERROR';
+  config: string; // JSON string
+  organizationId: string;
+  createdAt: string;
+}
+
+export interface Webhook {
+  id: string;
+  url: string;
+  events: string; // JSON string
+  secret?: string;
+  isActive: boolean;
+  organizationId: string;
+  createdAt: string;
+}
+
+export interface ApprovalRequest {
+  id: string;
+  templateId: string;
+  requesterId: string;
+  status: 'PENDING' | 'APPROVED' | 'REJECTED';
+  comments?: string;
+  createdAt: string;
+}
+
 export interface Template {
   id: string;
   name: string;
   content: string;
   category?: string;
+  status: 'DRAFT' | 'IN_REVIEW' | 'APPROVED';
   organizationId: string;
   createdAt: string;
 }
@@ -94,6 +159,26 @@ export interface Campaign {
   templateId?: string;
   template?: Template;
   createdAt: string;
+}
+
+export interface Flow {
+  id: string;
+  name: string;
+  status: 'DRAFT' | 'ACTIVE' | 'PAUSED';
+  nodes: string; // JSON string
+  edges: string; // JSON string
+  organizationId: string;
+  createdAt: string;
+  updatedAt: string;
+}
+
+export interface Event {
+  id: string;
+  type: string;
+  metadata: string; // JSON string
+  campaignId?: string;
+  contactId: string;
+  timestamp: string;
 }
 
 export interface DashboardStats {

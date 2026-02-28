@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useCallback } from 'react';
 import { BrowserRouter, Routes, Route, Link, useLocation, useParams, Navigate, useSearchParams } from 'react-router-dom';
 import { 
   LayoutDashboard, 
@@ -27,12 +27,25 @@ import {
   ArrowDownRight,
   Zap,
   Clock,
-  Globe
+  Globe,
+  ShieldCheck,
+  Languages,
+  Wand2,
+  AlertTriangle,
+  ShoppingBag,
+  CreditCard,
+  Users2,
+  Link2,
+  Activity,
+  Package,
+  Lock,
+  ExternalLink,
+  RefreshCw
 } from 'lucide-react';
 import { motion, AnimatePresence } from 'motion/react';
 import { api } from './services/api';
 import { geminiService } from './services/geminiService';
-import { User, Contact, Template, Campaign, DashboardStats, Segment, CustomFieldDefinition } from './types';
+import { User, Contact, Template, Campaign, DashboardStats, Segment, CustomFieldDefinition, Flow, Event } from './types';
 import { format } from 'date-fns';
 import { 
   BarChart, 
@@ -45,7 +58,10 @@ import {
   LineChart,
   Line,
   AreaChart,
-  Area
+  Area,
+  PieChart,
+  Pie,
+  Cell
 } from 'recharts';
 import ReactQuill from 'react-quill-new';
 import 'react-quill-new/dist/quill.snow.css';
@@ -56,6 +72,20 @@ import { twMerge } from 'tailwind-merge';
 import { useForm } from 'react-hook-form';
 import { zodResolver } from '@hookform/resolvers/zod';
 import { z } from 'zod';
+import ReactFlow, { 
+  Background, 
+  Controls, 
+  MiniMap, 
+  addEdge, 
+  useNodesState, 
+  useEdgesState,
+  Connection,
+  Edge,
+  Node,
+  Handle,
+  Position,
+  Panel
+} from 'reactflow';
 
 // --- Utils ---
 function cn(...inputs: ClassValue[]) {
@@ -78,10 +108,13 @@ const Masthead = ({ user }: { user: User | null }) => {
           <nav className="hidden lg:flex items-center gap-8">
             <Link to="/campaigns" className={cn("masthead-link", location.pathname.startsWith('/campaigns') && "active")}>Campaigns</Link>
             <Link to="/audiences" className={cn("masthead-link", location.pathname.startsWith('/audiences') && "active")}>Audiences</Link>
-            <Link to="/data-layer" className={cn("masthead-link", location.pathname.startsWith('/data-layer') && "active")}>Data Layer</Link>
             <Link to="/automations" className={cn("masthead-link", location.pathname.startsWith('/automations') && "active")}>Automations</Link>
+            <Link to="/commerce" className={cn("masthead-link", location.pathname.startsWith('/commerce') && "active")}>Commerce</Link>
+            <Link to="/collaboration" className={cn("masthead-link", location.pathname.startsWith('/collaboration') && "active")}>Collaboration</Link>
+            <Link to="/integrations" className={cn("masthead-link", location.pathname.startsWith('/integrations') && "active")}>Integrations</Link>
             <Link to="/reports" className={cn("masthead-link", location.pathname.startsWith('/reports') && "active")}>Reports</Link>
             <Link to="/templates" className={cn("masthead-link", location.pathname.startsWith('/templates') && "active")}>Templates</Link>
+            <Link to="/infrastructure" className={cn("masthead-link", location.pathname.startsWith('/infrastructure') && "active")}>Infrastructure</Link>
           </nav>
         </div>
 
@@ -140,6 +173,385 @@ const MetricBlock = ({ label, value, delta, deltaType }: { label: string, value:
 );
 
 // --- Pages ---
+
+const Commerce = () => {
+  const [products, setProducts] = useState<any[]>([]);
+  const [revenue, setRevenue] = useState<number>(0);
+  const [isSyncing, setIsSyncing] = useState(false);
+
+  useEffect(() => {
+    api.getProducts().then(setProducts);
+    api.getRevenueSummary().then(res => setRevenue(res.totalRevenue));
+  }, []);
+
+  const handleSync = async () => {
+    setIsSyncing(true);
+    await api.syncProducts();
+    const updated = await api.getProducts();
+    setProducts(updated);
+    setIsSyncing(false);
+  };
+
+  return (
+    <div className="space-y-12">
+      <SectionHeader 
+        title="Commerce & Revenue" 
+        subtitle="Monetize your editorial dispatches with integrated product feeds."
+        action={
+          <button 
+            onClick={handleSync}
+            disabled={isSyncing}
+            className="btn-primary flex items-center gap-2"
+          >
+            <RefreshCw size={16} className={cn(isSyncing && "animate-spin")} />
+            {isSyncing ? "Syncing..." : "Sync Product Feed"}
+          </button>
+        }
+      />
+
+      <div className="newspaper-grid border-b border-border-hairline pb-12">
+        <div className="col-span-12 lg:col-span-4">
+          <MetricBlock label="Total Revenue" value={`$${revenue.toLocaleString()}`} delta="18% vs last month" deltaType="up" />
+        </div>
+        <div className="col-span-12 lg:col-span-4">
+          <MetricBlock label="Campaign ROI" value="4.2x" delta="0.5x" deltaType="up" />
+        </div>
+        <div className="col-span-12 lg:col-span-4">
+          <MetricBlock label="Avg. Order Value" value="$84.50" />
+        </div>
+      </div>
+
+      <div className="grid grid-cols-12 gap-12">
+        <div className="col-span-12 lg:col-span-8 space-y-8">
+          <h3 className="text-2xl font-serif font-bold text-ink">Product Feed</h3>
+          <div className="border border-border-hairline divide-y divide-border-hairline">
+            {products.length === 0 ? (
+              <div className="p-12 text-center font-editorial italic text-ink/40">No products synced yet.</div>
+            ) : (
+              products.map(product => (
+                <div key={product.id} className="p-6 flex items-center justify-between hover:bg-surface transition-colors group">
+                  <div className="flex items-center gap-6">
+                    <div className="w-16 h-16 bg-surface border border-border-hairline flex items-center justify-center text-ink/20">
+                      {product.imageUrl ? <img src={product.imageUrl} alt={product.name} className="w-full h-full object-cover" /> : <Package size={24} />}
+                    </div>
+                    <div>
+                      <p className="text-sm font-black uppercase tracking-widest text-ink">{product.name}</p>
+                      <p className="text-[10px] font-mono text-ink/40 uppercase">{product.source} • {product.externalId}</p>
+                    </div>
+                  </div>
+                  <div className="text-right">
+                    <p className="text-lg font-serif font-bold text-ink">${product.price.toFixed(2)}</p>
+                    <button className="text-[9px] font-mono text-burgundy uppercase font-bold opacity-0 group-hover:opacity-100 transition-opacity">Insert into Campaign</button>
+                  </div>
+                </div>
+              ))
+            )}
+          </div>
+        </div>
+
+        <div className="col-span-12 lg:col-span-4 space-y-8">
+          <h3 className="text-2xl font-serif font-bold text-ink">Revenue Attribution</h3>
+          <div className="bg-surface border border-border-hairline p-8 space-y-6">
+            <div className="space-y-4">
+              <div className="flex justify-between items-end">
+                <p className="text-[10px] font-black uppercase tracking-widest text-ink/60">Campaign Revenue</p>
+                <p className="text-xl font-serif font-bold text-ink">$12,450</p>
+              </div>
+              <div className="w-full bg-bg h-1">
+                <div className="bg-burgundy h-full" style={{ width: '75%' }}></div>
+              </div>
+            </div>
+            <div className="space-y-4">
+              <div className="flex justify-between items-end">
+                <p className="text-[10px] font-black uppercase tracking-widest text-ink/60">Automation Revenue</p>
+                <p className="text-xl font-serif font-bold text-ink">$4,120</p>
+              </div>
+              <div className="w-full bg-bg h-1">
+                <div className="bg-burgundy h-full" style={{ width: '25%' }}></div>
+              </div>
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <div className="space-y-8">
+        <h3 className="text-2xl font-serif font-bold text-ink">Dynamic Product Blocks</h3>
+        <div className="grid grid-cols-12 gap-6">
+          <div className="col-span-12 lg:col-span-4 bg-surface border border-border-hairline p-8 space-y-6">
+            <div className="flex justify-between items-center">
+              <p className="text-[10px] font-black uppercase tracking-widest text-ink/40">Block Preview</p>
+              <span className="px-2 py-0.5 bg-burgundy text-white text-[8px] font-black uppercase tracking-widest">Live</span>
+            </div>
+            <div className="bg-bg p-6 border border-border-hairline space-y-4">
+              <div className="aspect-square bg-surface border border-border-hairline flex items-center justify-center text-ink/10">
+                <ShoppingBag size={48} />
+              </div>
+              <div className="space-y-1">
+                <p className="text-sm font-black uppercase tracking-widest text-ink">Product Name</p>
+                <p className="text-xs font-serif font-bold text-burgundy">$0.00</p>
+              </div>
+              <button className="w-full py-2 bg-ink text-white text-[9px] font-black uppercase tracking-widest">Shop Now</button>
+            </div>
+          </div>
+          <div className="col-span-12 lg:col-span-8 bg-surface border border-border-hairline p-12 flex flex-col items-center justify-center text-center space-y-6">
+            <Zap size={48} className="text-burgundy/20" />
+            <div>
+              <p className="text-lg font-serif font-bold text-ink">Intelligent Product Recommendations</p>
+              <p className="text-sm font-editorial italic text-ink/60 max-w-md mx-auto">Automatically insert products into your dispatches based on recipient engagement and purchase history.</p>
+            </div>
+            <div className="flex gap-4">
+              <button className="btn-primary py-2 px-6">Configure Logic</button>
+              <button className="py-2 px-6 border border-border-hairline text-[10px] font-black uppercase tracking-widest text-ink/60 hover:bg-bg transition-colors">View Documentation</button>
+            </div>
+          </div>
+        </div>
+      </div>
+    </div>
+  );
+};
+
+const Collaboration = () => {
+  const [team, setTeam] = useState<any[]>([]);
+  const [brands, setBrands] = useState<any[]>([]);
+  const [approvals, setApprovals] = useState<any[]>([]);
+
+  useEffect(() => {
+    api.getTeam().then(setTeam);
+    api.getBrands().then(setBrands);
+    api.getApprovals().then(setApprovals);
+  }, []);
+
+  const handleApproval = async (id: string, status: 'APPROVED' | 'REJECTED') => {
+    await api.updateApprovalStatus(id, status);
+    api.getApprovals().then(setApprovals);
+  };
+
+  const pendingApprovals = approvals.filter(a => a.status === 'PENDING');
+
+  return (
+    <div className="space-y-16">
+      <SectionHeader 
+        title="Collaboration & Enterprise" 
+        subtitle="Manage your editorial team and multi-brand infrastructure."
+      />
+
+      <div className="grid grid-cols-12 gap-12">
+        <div className="col-span-12 lg:col-span-7 space-y-8">
+          <div className="flex justify-between items-center">
+            <h3 className="text-2xl font-serif font-bold text-ink">Team Management</h3>
+            <button className="btn-primary py-2 px-4 text-[10px]">Invite Member</button>
+          </div>
+          <div className="border border-border-hairline divide-y divide-border-hairline">
+            {team.map(member => (
+              <div key={member.id} className="p-6 flex items-center justify-between hover:bg-surface transition-colors">
+                <div className="flex items-center gap-4">
+                  <div className="w-10 h-10 bg-burgundy/10 text-burgundy flex items-center justify-center rounded-full font-serif font-bold">
+                    {member.name[0]}
+                  </div>
+                  <div>
+                    <p className="text-sm font-black uppercase tracking-widest text-ink">{member.name}</p>
+                    <p className="text-[10px] font-mono text-ink/40 uppercase">{member.email}</p>
+                  </div>
+                </div>
+                <div className="flex items-center gap-4">
+                  <span className="px-2 py-1 bg-surface border border-border-hairline text-[9px] font-mono text-ink/60 uppercase rounded">
+                    {member.role}
+                  </span>
+                  <button className="text-ink/40 hover:text-burgundy transition-colors"><MoreHorizontal size={16} /></button>
+                </div>
+              </div>
+            ))}
+          </div>
+        </div>
+
+        <div className="col-span-12 lg:col-span-5 space-y-8">
+          <h3 className="text-2xl font-serif font-bold text-ink">Brand Kits</h3>
+          <div className="space-y-6">
+            <div className="bg-surface border border-border-hairline p-8 space-y-6">
+              <div className="flex items-center gap-4">
+                <div className="w-12 h-12 bg-ink flex items-center justify-center text-white font-serif font-black text-xl">S</div>
+                <div>
+                  <p className="text-sm font-black uppercase tracking-widest text-ink">SIGNAL Main</p>
+                  <p className="text-[10px] font-mono text-ink/40 uppercase">Primary Workspace</p>
+                </div>
+              </div>
+              <div className="flex gap-2">
+                <div className="w-8 h-8 bg-burgundy rounded border border-border-hairline"></div>
+                <div className="w-8 h-8 bg-ink rounded border border-border-hairline"></div>
+                <div className="w-8 h-8 bg-bg rounded border border-border-hairline"></div>
+              </div>
+              <button className="w-full py-3 border border-border-hairline text-[10px] font-black uppercase tracking-widest text-ink/60 hover:bg-bg transition-colors">Edit Brand Kit</button>
+            </div>
+            <button className="w-full py-4 border-2 border-dashed border-border-hairline text-[10px] font-black uppercase tracking-widest text-ink/40 hover:border-burgundy hover:text-burgundy transition-all flex items-center justify-center gap-2">
+              <Plus size={14} /> Add New Brand
+            </button>
+          </div>
+        </div>
+      </div>
+
+      <div className="space-y-8">
+        <h3 className="text-2xl font-serif font-bold text-ink">Governance & Approvals</h3>
+        <div className="grid grid-cols-12 gap-6">
+          <div className="col-span-12 lg:col-span-5 bg-surface border border-border-hairline p-6 space-y-4">
+            <div className="flex justify-between items-center">
+              <p className="text-[10px] font-black uppercase tracking-widest text-ink/40">Pending Review</p>
+              <span className="text-[10px] font-mono text-burgundy font-bold">{pendingApprovals.length} PENDING</span>
+            </div>
+            <div className="space-y-3">
+              {pendingApprovals.length === 0 ? (
+                <p className="text-xs font-editorial italic text-ink/40 py-4 text-center">No pending approvals.</p>
+              ) : (
+                pendingApprovals.map(approval => (
+                  <div key={approval.id} className="p-4 bg-bg border border-border-hairline space-y-3">
+                    <div className="flex justify-between items-start">
+                      <div>
+                        <p className="text-[10px] font-black uppercase tracking-widest text-burgundy">
+                          {approval.templateId ? 'Template' : 'Campaign'}
+                        </p>
+                        <p className="text-sm font-bold text-ink uppercase">
+                          {approval.template?.name || approval.campaign?.name}
+                        </p>
+                        <p className="text-[9px] font-mono text-ink/40 uppercase mt-1">
+                          Requested by {approval.requesterId} • {format(new Date(approval.createdAt), 'MMM d, HH:mm')}
+                        </p>
+                      </div>
+                    </div>
+                    <div className="flex gap-2 pt-2 border-t border-border-hairline">
+                      <button 
+                        onClick={() => handleApproval(approval.id, 'APPROVED')}
+                        className="flex-1 py-1.5 bg-ink text-white text-[9px] font-black uppercase tracking-widest hover:bg-ink/80 transition-colors"
+                      >
+                        Approve
+                      </button>
+                      <button 
+                        onClick={() => handleApproval(approval.id, 'REJECTED')}
+                        className="flex-1 py-1.5 border border-border-hairline text-[9px] font-black uppercase tracking-widest hover:bg-bg transition-colors"
+                      >
+                        Reject
+                      </button>
+                    </div>
+                  </div>
+                ))
+              )}
+            </div>
+          </div>
+          <div className="col-span-12 lg:col-span-7 bg-surface border border-border-hairline p-12 flex flex-col items-center justify-center text-center space-y-4">
+            <ShieldCheck size={48} className="text-burgundy/20" />
+            <div>
+              <p className="text-lg font-serif font-bold text-ink">Enterprise Governance</p>
+              <p className="text-sm font-editorial italic text-ink/60 max-w-md mx-auto">Enforce strict approval workflows for all templates and campaigns before they can be used in live dispatches.</p>
+            </div>
+            <div className="flex gap-4">
+              <button className="btn-primary py-2 px-6">Configure Workflow</button>
+              <button className="py-2 px-6 border border-border-hairline text-[10px] font-black uppercase tracking-widest text-ink/60 hover:bg-bg transition-colors">Audit Logs</button>
+            </div>
+          </div>
+        </div>
+      </div>
+    </div>
+  );
+};
+
+const Integrations = () => {
+  const [integrations, setIntegrations] = useState<any[]>([]);
+  const [webhooks, setWebhooks] = useState<any[]>([]);
+
+  useEffect(() => {
+    api.getIntegrations().then(setIntegrations);
+    api.getWebhooks().then(setWebhooks);
+  }, []);
+
+  const marketplace = [
+    { id: 'shopify', name: 'Shopify', desc: 'Sync products and customers.', icon: <ShoppingBag size={24} />, status: 'Connected' },
+    { id: 'hubspot', name: 'HubSpot', desc: 'Two-way CRM sync.', icon: <Users2 size={24} />, status: 'Connect' },
+    { id: 'zapier', name: 'Zapier', desc: 'Connect to 5,000+ apps.', icon: <Zap size={24} />, status: 'Connect' },
+    { id: 'woo', name: 'WooCommerce', desc: 'E-commerce integration.', icon: <ShoppingBag size={24} />, status: 'Connect' },
+  ];
+
+  return (
+    <div className="space-y-16">
+      <SectionHeader 
+        title="Integration & API" 
+        subtitle="Extend SIGNAL with your existing stack and custom hooks."
+      />
+
+      <div className="space-y-8">
+        <h3 className="text-2xl font-serif font-bold text-ink">Integrations Marketplace</h3>
+        <div className="grid grid-cols-12 gap-6">
+          {marketplace.map(item => (
+            <div key={item.id} className="col-span-12 md:col-span-6 lg:col-span-3 bg-surface border border-border-hairline p-8 space-y-6 hover:border-burgundy transition-colors group">
+              <div className="w-12 h-12 bg-bg border border-border-hairline flex items-center justify-center text-ink/60 group-hover:text-burgundy transition-colors">
+                {item.icon}
+              </div>
+              <div>
+                <p className="text-sm font-black uppercase tracking-widest text-ink">{item.name}</p>
+                <p className="text-[11px] font-editorial italic text-ink/60 mt-1">{item.desc}</p>
+              </div>
+              <button className={cn(
+                "w-full py-2 text-[10px] font-black uppercase tracking-widest transition-all",
+                item.status === 'Connected' ? "bg-status-success/10 text-status-success border border-status-success/20" : "border border-border-hairline text-ink/60 hover:bg-bg"
+              )}>
+                {item.status}
+              </button>
+            </div>
+          ))}
+        </div>
+      </div>
+
+      <div className="grid grid-cols-12 gap-12">
+        <div className="col-span-12 lg:col-span-7 space-y-8">
+          <div className="flex justify-between items-center">
+            <h3 className="text-2xl font-serif font-bold text-ink">Webhooks</h3>
+            <button className="btn-primary py-2 px-4 text-[10px]">Add Webhook</button>
+          </div>
+          <div className="border border-border-hairline divide-y divide-border-hairline">
+            {webhooks.length === 0 ? (
+              <div className="p-12 text-center font-editorial italic text-ink/40">No webhooks configured.</div>
+            ) : (
+              webhooks.map(hook => (
+                <div key={hook.id} className="p-6 flex items-center justify-between hover:bg-surface transition-colors">
+                  <div className="space-y-1">
+                    <p className="text-xs font-mono font-bold text-ink">{hook.url}</p>
+                    <p className="text-[9px] font-mono text-ink/40 uppercase">Events: {hook.events}</p>
+                  </div>
+                  <div className="flex items-center gap-4">
+                    <span className="w-2 h-2 bg-status-success rounded-full"></span>
+                    <button className="text-ink/40 hover:text-burgundy transition-colors"><Trash2 size={16} /></button>
+                  </div>
+                </div>
+              ))
+            )}
+          </div>
+        </div>
+
+        <div className="col-span-12 lg:col-span-5 space-y-8">
+          <h3 className="text-2xl font-serif font-bold text-ink">API Access</h3>
+          <div className="bg-ink text-white p-8 space-y-6">
+            <div className="space-y-2">
+              <p className="text-[10px] font-black uppercase tracking-widest text-white/40">Production API Key</p>
+              <div className="flex items-center gap-3 bg-white/5 border border-white/10 p-3 font-mono text-xs">
+                <Lock size={12} className="text-white/20" />
+                <span className="flex-1 overflow-hidden text-ellipsis">sig_live_••••••••••••••••••••</span>
+                <button className="text-white/40 hover:text-white transition-colors"><Eye size={14} /></button>
+              </div>
+            </div>
+            <div className="space-y-4 pt-4 border-t border-white/10">
+              <div className="flex justify-between text-[10px] font-mono text-white/40 uppercase">
+                <span>Rate Limit</span>
+                <span className="text-white">1,000 req/min</span>
+              </div>
+              <div className="flex justify-between text-[10px] font-mono text-white/40 uppercase">
+                <span>Usage (24h)</span>
+                <span className="text-white">452 requests</span>
+              </div>
+            </div>
+            <button className="w-full py-3 bg-white text-ink text-[10px] font-black uppercase tracking-widest hover:bg-white/90 transition-colors">Generate New Key</button>
+          </div>
+        </div>
+      </div>
+    </div>
+  );
+};
 
 const Home = () => {
   const [stats, setStats] = useState<DashboardStats | null>(null);
@@ -306,17 +718,28 @@ const Campaigns = () => {
   const [aiTopic, setAiTopic] = useState('');
   const [aiSuggestions, setAiSuggestions] = useState<string[]>([]);
   const [isGenerating, setIsGenerating] = useState(false);
+  const [isCheckingSpam, setIsCheckingSpam] = useState(false);
+  const [spamResult, setSpamResult] = useState<{ score: number, reasons: string[] } | null>(null);
+  const [isOptimizingPreview, setIsOptimizingPreview] = useState(false);
+  const [isAdjustingTone, setIsAdjustingTone] = useState(false);
+  const [isTranslating, setIsTranslating] = useState(false);
+  const [predictedTime, setPredictedTime] = useState<{ hour: number, reason: string } | null>(null);
+  const [isPredictingTime, setIsPredictingTime] = useState(false);
   const [statusFilter, setStatusFilter] = useState<string>('ALL');
   const [typeFilter, setTypeFilter] = useState<string>('ALL');
+  const [approvals, setApprovals] = useState<any[]>([]);
   const [templates, setTemplates] = useState<Template[]>([]);
   const [previewCampaign, setPreviewCampaign] = useState<Campaign | null>(null);
   const [previewContact, setPreviewContact] = useState<Contact | null>(null);
+  const [abResults, setAbResults] = useState<any>(null);
+  const [selectedAbCampaign, setSelectedAbCampaign] = useState<Campaign | null>(null);
   const [personalizedContent, setPersonalizedContent] = useState<string>('');
   const [contacts, setContacts] = useState<Contact[]>([]);
 
   useEffect(() => {
     api.getCampaigns().then(setCampaigns);
     api.getContacts().then(setContacts);
+    api.getApprovals().then(setApprovals);
     api.getTemplates().then(res => {
       setTemplates(res);
       const templateId = searchParams.get('templateId');
@@ -361,6 +784,13 @@ const Campaigns = () => {
     }
   };
 
+  const handleRequestApproval = async (campaignId: string) => {
+    await api.requestApproval({ campaignId });
+    api.getCampaigns().then(setCampaigns);
+    api.getApprovals().then(setApprovals);
+    alert("Approval request sent to editorial board.");
+  };
+
   const filteredCampaigns = campaigns.filter(camp => {
     const matchesStatus = statusFilter === 'ALL' || camp.status === statusFilter;
     const matchesType = typeFilter === 'ALL' || camp.type === typeFilter;
@@ -397,12 +827,62 @@ const Campaigns = () => {
     }
   };
 
+  const handlePickWinner = async (id: string, winner: 'A' | 'B') => {
+    await api.pickWinner(id, winner);
+    setAbResults(null);
+    setSelectedAbCampaign(null);
+    api.getCampaigns().then(setCampaigns);
+  };
+
+  const viewABResults = async (camp: Campaign) => {
+    const results = await api.getABResults(camp.id);
+    setAbResults(results);
+    setSelectedAbCampaign(camp);
+  };
+
   const generateAI = async () => {
     if (!aiTopic) return;
     setIsGenerating(true);
-    const suggestions = await geminiService.generateSubjectLines(aiTopic);
+    const suggestions = await api.generateSubjectLines(aiTopic);
     setAiSuggestions(suggestions);
     setIsGenerating(false);
+  };
+
+  const optimizePreview = async () => {
+    if (!newCampaign.subject || !newCampaign.content) return;
+    setIsOptimizingPreview(true);
+    const preview = await api.optimizePreview(newCampaign.subject, newCampaign.content);
+    setNewCampaign({ ...newCampaign, previewText: preview });
+    setIsOptimizingPreview(false);
+  };
+
+  const checkSpam = async () => {
+    setIsCheckingSpam(true);
+    const result = await api.checkSpam(newCampaign.subject, newCampaign.content);
+    setSpamResult(result);
+    setIsCheckingSpam(false);
+  };
+
+  const adjustTone = async (tone: string) => {
+    setIsAdjustingTone(true);
+    const rewritten = await api.adjustTone(newCampaign.content, tone);
+    setNewCampaign({ ...newCampaign, content: rewritten });
+    setIsAdjustingTone(false);
+  };
+
+  const translateContent = async (lang: string) => {
+    setIsTranslating(true);
+    const translated = await api.translate(newCampaign.content, lang);
+    setNewCampaign({ ...newCampaign, content: translated });
+    setIsTranslating(false);
+  };
+
+  const predictTime = async () => {
+    if (!newCampaign.name) return;
+    setIsPredictingTime(true);
+    const prediction = await api.predictSendTime(newCampaign.name);
+    setPredictedTime(prediction);
+    setIsPredictingTime(false);
   };
 
   return (
@@ -508,7 +988,18 @@ const Campaigns = () => {
                       />
 
                       <div className="space-y-2">
-                        <label className="metric-label">Preview Text</label>
+                        <div className="flex justify-between items-end">
+                          <label className="metric-label">Preview Text</label>
+                          <button 
+                            type="button"
+                            onClick={optimizePreview}
+                            disabled={isOptimizingPreview || !newCampaign.subject}
+                            className="text-[10px] font-black uppercase tracking-widest text-burgundy hover:underline disabled:opacity-50 flex items-center gap-1"
+                          >
+                            <Sparkles size={10} />
+                            {isOptimizingPreview ? 'Optimizing...' : 'AI Optimize'}
+                          </button>
+                        </div>
                         <input 
                           type="text" 
                           className="w-full bg-transparent border-b border-border-hairline py-1 font-sans text-sm outline-none focus:border-burgundy transition-colors"
@@ -537,8 +1028,71 @@ const Campaigns = () => {
                       )}
                     </div>
 
-                    <div className="space-y-2">
-                      <label className="metric-label">Editorial Content</label>
+                    <div className="space-y-4">
+                      <div className="flex justify-between items-center">
+                        <label className="metric-label">Editorial Content</label>
+                        <div className="flex gap-4">
+                          <div className="relative group">
+                            <button type="button" className="text-[10px] font-black uppercase tracking-widest text-ink/40 hover:text-burgundy flex items-center gap-1">
+                              <Wand2 size={10} /> Tone
+                            </button>
+                            <div className="absolute right-0 top-full mt-2 bg-bg border border-ink p-2 hidden group-hover:block z-10 shadow-xl min-w-[120px]">
+                              {['Professional', 'Casual', 'Urgent', 'Inspirational', 'Authoritative'].map(tone => (
+                                <button 
+                                  key={tone}
+                                  type="button"
+                                  onClick={() => adjustTone(tone)}
+                                  className="block w-full text-left px-2 py-1 text-[10px] font-black uppercase tracking-widest hover:bg-surface"
+                                >
+                                  {tone}
+                                </button>
+                              ))}
+                            </div>
+                          </div>
+                          <div className="relative group">
+                            <button type="button" className="text-[10px] font-black uppercase tracking-widest text-ink/40 hover:text-burgundy flex items-center gap-1">
+                              <Languages size={10} /> Translate
+                            </button>
+                            <div className="absolute right-0 top-full mt-2 bg-bg border border-ink p-2 hidden group-hover:block z-10 shadow-xl min-w-[120px]">
+                              {['Turkish', 'German', 'French', 'Spanish', 'Japanese'].map(lang => (
+                                <button 
+                                  key={lang}
+                                  type="button"
+                                  onClick={() => translateContent(lang)}
+                                  className="block w-full text-left px-2 py-1 text-[10px] font-black uppercase tracking-widest hover:bg-surface"
+                                >
+                                  {lang}
+                                </button>
+                              ))}
+                            </div>
+                          </div>
+                          <button 
+                            type="button"
+                            onClick={checkSpam}
+                            disabled={isCheckingSpam}
+                            className="text-[10px] font-black uppercase tracking-widest text-ink/40 hover:text-burgundy flex items-center gap-1"
+                          >
+                            <ShieldCheck size={10} /> 
+                            {isCheckingSpam ? 'Checking...' : 'Spam Check'}
+                          </button>
+                        </div>
+                      </div>
+                      
+                      {spamResult && (
+                        <div className={cn(
+                          "p-4 border font-mono text-[10px] uppercase",
+                          spamResult.score > 30 ? "bg-status-warning/10 border-status-warning text-status-warning" : "bg-status-success/10 border-status-success text-status-success"
+                        )}>
+                          <div className="flex justify-between items-center mb-2">
+                            <p className="font-black">Spam Score: {spamResult.score}/100</p>
+                            {spamResult.score > 30 && <AlertTriangle size={12} />}
+                          </div>
+                          <ul className="list-disc pl-4 space-y-1">
+                            {spamResult.reasons.map((r, i) => <li key={i}>{r}</li>)}
+                          </ul>
+                        </div>
+                      )}
+
                       <ReactQuill 
                         theme="snow" 
                         value={newCampaign.content}
@@ -648,9 +1202,20 @@ const Campaigns = () => {
                     <p className="font-sans font-black uppercase tracking-[0.2em] text-ink/40 text-[10px]">Scheduling</p>
                     <div className="space-y-6">
                       <div className="space-y-2">
-                        <label className="metric-label flex items-center gap-2">
-                          <Clock size={12} /> Date & Time
-                        </label>
+                        <div className="flex justify-between items-end">
+                          <label className="metric-label flex items-center gap-2">
+                            <Clock size={12} /> Date & Time
+                          </label>
+                          <button 
+                            type="button"
+                            onClick={predictTime}
+                            disabled={isPredictingTime}
+                            className="text-[10px] font-black uppercase tracking-widest text-burgundy hover:underline disabled:opacity-50 flex items-center gap-1"
+                          >
+                            <Sparkles size={10} />
+                            {isPredictingTime ? 'Analyzing...' : 'AI Best Time'}
+                          </button>
+                        </div>
                         <div className="relative">
                           <DatePicker
                             selected={newCampaign.scheduledAt ? new Date(newCampaign.scheduledAt) : null}
@@ -662,6 +1227,24 @@ const Campaigns = () => {
                             minDate={new Date()}
                           />
                         </div>
+                        {predictedTime && (
+                          <div className="bg-burgundy/5 border border-burgundy/20 p-3 mt-2">
+                            <p className="text-[9px] font-black uppercase text-burgundy mb-1">AI Recommendation</p>
+                            <p className="text-[10px] font-serif italic text-ink/80">{predictedTime.reason}</p>
+                            <button 
+                              type="button"
+                              onClick={() => {
+                                const date = new Date();
+                                date.setHours(predictedTime.hour, 0, 0, 0);
+                                if (date < new Date()) date.setDate(date.getDate() + 1);
+                                setNewCampaign({ ...newCampaign, scheduledAt: date.toISOString() });
+                              }}
+                              className="mt-2 text-[9px] font-black uppercase tracking-widest text-burgundy hover:underline"
+                            >
+                              Apply {predictedTime.hour}:00
+                            </button>
+                          </div>
+                        )}
                       </div>
                       <div className="space-y-2">
                         <label className="metric-label flex items-center gap-2">
@@ -689,6 +1272,16 @@ const Campaigns = () => {
                         <p className="text-[9px] font-mono text-ink/40 uppercase mt-1">
                           Current selection: <span className="text-burgundy">{newCampaign.timezone}</span>
                         </p>
+                      </div>
+                      <div className="flex items-center gap-2 pt-2">
+                        <input 
+                          type="checkbox" 
+                          id="perUserTimezone"
+                          className="accent-burgundy"
+                        />
+                        <label htmlFor="perUserTimezone" className="text-[10px] font-black uppercase tracking-widest text-ink/60 cursor-pointer">
+                          Per-user timezone sending
+                        </label>
                       </div>
                     </div>
                   </div>
@@ -721,7 +1314,7 @@ const Campaigns = () => {
               <Filter size={12} /> Status:
             </span>
             <div className="flex gap-2">
-              {['ALL', 'DRAFT', 'SCHEDULED', 'SENT'].map(s => (
+              {['ALL', 'DRAFT', 'IN_REVIEW', 'SCHEDULED', 'SENT'].map(s => (
                 <button 
                   key={s}
                   onClick={() => setStatusFilter(s)}
@@ -730,7 +1323,7 @@ const Campaigns = () => {
                     statusFilter === s ? "bg-burgundy text-white border-burgundy" : "border-border-hairline text-ink/40 hover:border-burgundy hover:text-burgundy"
                   )}
                 >
-                  {s}
+                  {s.replace('_', ' ')}
                 </button>
               ))}
             </div>
@@ -794,9 +1387,10 @@ const Campaigns = () => {
                 "px-2 py-0.5 text-[9px] font-black uppercase tracking-widest border",
                 camp.status === 'SENT' ? "border-status-success text-status-success" :
                 camp.status === 'SCHEDULED' ? "border-status-scheduled text-status-scheduled" :
+                camp.status === 'IN_REVIEW' ? "border-burgundy text-burgundy" :
                 "border-status-draft text-status-draft"
               )}>
-                {camp.status}
+                {camp.status.replace('_', ' ')}
               </span>
             </div>
             <div className="col-span-2 space-y-1">
@@ -834,11 +1428,29 @@ const Campaigns = () => {
               </button>
               {camp.status === 'DRAFT' && (
                 <button 
+                  onClick={() => handleRequestApproval(camp.id)}
+                  className="text-burgundy hover:scale-110 transition-transform"
+                  title="Request Approval"
+                >
+                  <ShieldCheck size={18} />
+                </button>
+              )}
+              {camp.status === 'DRAFT' && (
+                <button 
                   onClick={() => handleSend(camp.id)}
                   className="text-burgundy hover:scale-110 transition-transform"
                   title="Send Now"
                 >
                   <Send size={18} />
+                </button>
+              )}
+              {camp.type === 'AB' && (
+                <button 
+                  onClick={() => viewABResults(camp)}
+                  className="text-burgundy hover:scale-110 transition-transform"
+                  title="View A/B Results"
+                >
+                  <Split size={18} />
                 </button>
               )}
               <button className="text-ink/20 hover:text-burgundy">
@@ -919,6 +1531,71 @@ const Campaigns = () => {
               </div>
               <div className="p-4 border-t border-border-hairline bg-surface text-center">
                 <p className="text-[10px] font-mono text-ink/40 uppercase">Editorial Preview Mode</p>
+              </div>
+            </motion.div>
+          </div>
+        )}
+
+        {abResults && selectedAbCampaign && (
+          <div className="fixed inset-0 z-50 flex items-center justify-center p-10 bg-ink/40 backdrop-blur-sm">
+            <motion.div 
+              initial={{ opacity: 0, scale: 0.95 }}
+              animate={{ opacity: 1, scale: 1 }}
+              exit={{ opacity: 0, scale: 0.95 }}
+              className="bg-bg border border-ink w-full max-w-2xl overflow-hidden flex flex-col shadow-2xl"
+            >
+              <div className="p-6 border-b border-border-hairline flex justify-between items-center bg-surface">
+                <h2 className="font-serif text-2xl font-bold">A/B Test Results: {selectedAbCampaign.name}</h2>
+                <button onClick={() => setAbResults(null)} className="text-ink/40 hover:text-burgundy p-2">✕</button>
+              </div>
+              <div className="p-10 space-y-8">
+                <div className="grid grid-cols-2 gap-8">
+                  <div className="space-y-4 p-6 border border-border-hairline bg-surface">
+                    <p className="font-sans font-black uppercase tracking-widest text-[10px] text-burgundy">Variation A</p>
+                    <p className="font-serif text-lg font-bold">"{selectedAbCampaign.subject}"</p>
+                    <div className="grid grid-cols-2 gap-4 pt-4 border-t border-border-hairline">
+                      <div>
+                        <p className="metric-label">Open Rate</p>
+                        <p className="text-2xl font-serif font-bold">{abResults.variationA.rate}%</p>
+                      </div>
+                      <div>
+                        <p className="metric-label">Clicks</p>
+                        <p className="text-2xl font-serif font-bold">{abResults.variationA.clicks}</p>
+                      </div>
+                    </div>
+                    <button 
+                      onClick={() => handlePickWinner(selectedAbCampaign.id, 'A')}
+                      className="w-full mt-4 py-2 border border-burgundy text-burgundy font-sans font-black uppercase tracking-widest text-[10px] hover:bg-burgundy hover:text-white transition-all"
+                    >
+                      Select as Winner
+                    </button>
+                  </div>
+                  <div className="space-y-4 p-6 border border-burgundy bg-burgundy/5">
+                    <p className="font-sans font-black uppercase tracking-widest text-[10px] text-burgundy">Variation B</p>
+                    <p className="font-serif text-lg font-bold">"{selectedAbCampaign.subjectB}"</p>
+                    <div className="grid grid-cols-2 gap-4 pt-4 border-t border-burgundy/20">
+                      <div>
+                        <p className="metric-label">Open Rate</p>
+                        <p className="text-2xl font-serif font-bold">{abResults.variationB.rate}%</p>
+                      </div>
+                      <div>
+                        <p className="metric-label">Clicks</p>
+                        <p className="text-2xl font-serif font-bold">{abResults.variationB.clicks}</p>
+                      </div>
+                    </div>
+                    <button 
+                      onClick={() => handlePickWinner(selectedAbCampaign.id, 'B')}
+                      className="w-full mt-4 py-2 bg-burgundy text-white font-sans font-black uppercase tracking-widest text-[10px] hover:bg-burgundy/90 transition-all"
+                    >
+                      Select as Winner
+                    </button>
+                  </div>
+                </div>
+                <div className="p-4 bg-ink text-white text-center">
+                  <p className="text-[10px] font-mono uppercase tracking-widest">
+                    AI Recommendation: <span className="text-burgundy font-black">Variation B</span> is performing 15% better in open rates.
+                  </p>
+                </div>
               </div>
             </motion.div>
           </div>
@@ -1183,12 +1860,26 @@ const CampaignDetail = () => {
 const Reports = () => {
   const [campaigns, setCampaigns] = useState<Campaign[]>([]);
   const [loading, setLoading] = useState(true);
+  const [activeTab, setActiveTab] = useState<'PERFORMANCE' | 'DELIVERABILITY' | 'FUNNEL' | 'COHORTS'>('PERFORMANCE');
+  const [deliverability, setDeliverability] = useState<any>(null);
+  const [funnel, setFunnel] = useState<any>(null);
+  const [cohorts, setCohorts] = useState<any>(null);
 
   useEffect(() => {
-    api.getCampaigns().then(res => {
-      setCampaigns(res.filter(c => c.status === 'SENT'));
+    const fetchData = async () => {
+      const [camps, deliv, fun, coh] = await Promise.all([
+        api.getCampaigns(),
+        api.getDeliverabilityAnalytics(),
+        api.getFunnelAnalytics(),
+        api.getCohortAnalytics()
+      ]);
+      setCampaigns(camps.filter(c => c.status === 'SENT'));
+      setDeliverability(deliv);
+      setFunnel(fun);
+      setCohorts(coh);
       setLoading(false);
-    });
+    };
+    fetchData();
   }, []);
 
   if (loading) return <div className="p-20 text-center font-editorial italic text-3xl">Loading Intelligence Hub...</div>;
@@ -1200,7 +1891,32 @@ const Reports = () => {
         subtitle="Aggregate insights and performance data across your editorial network."
       />
 
-      <div className="grid grid-cols-1 md:grid-cols-4 gap-8">
+      <div className="flex gap-8 border-b border-ink pb-2">
+        {[
+          { id: 'PERFORMANCE', label: 'Broadcast Performance' },
+          { id: 'DELIVERABILITY', label: 'Deliverability' },
+          { id: 'FUNNEL', label: 'Funnel Analytics' },
+          { id: 'COHORTS', label: 'Cohort Analysis' },
+        ].map(tab => (
+          <button 
+            key={tab.id}
+            onClick={() => setActiveTab(tab.id as any)}
+            className={cn(
+              "font-sans font-black uppercase tracking-widest text-[10px] transition-all relative",
+              activeTab === tab.id ? "text-burgundy" : "text-ink/40 hover:text-ink"
+            )}
+          >
+            {tab.label}
+            {activeTab === tab.id && (
+              <motion.div layoutId="activeTab" className="absolute -bottom-[9px] left-0 w-full h-[1px] bg-burgundy" />
+            )}
+          </button>
+        ))}
+      </div>
+
+      {activeTab === 'PERFORMANCE' && (
+        <div className="space-y-12">
+          <div className="grid grid-cols-1 md:grid-cols-4 gap-8">
         <div className="bg-surface border border-border-hairline p-8 space-y-2">
           <p className="metric-label">Avg. Open Rate</p>
           <p className="text-4xl font-serif font-bold">28.4%</p>
@@ -1253,20 +1969,175 @@ const Reports = () => {
               <p className="font-serif text-xl font-bold">1.2%</p>
               <p className="text-[9px] font-mono text-ink/30 uppercase">14 orders</p>
             </div>
-            <div className="col-span-1 flex justify-end">
-              <Link to={`/campaigns/${camp.id}`} className="text-ink/20 hover:text-burgundy">
-                <ArrowUpRight size={20} />
-              </Link>
+                <div className="col-span-1 flex justify-end">
+                  <Link to={`/campaigns/${camp.id}`} className="text-ink/20 hover:text-burgundy">
+                    <ArrowUpRight size={20} />
+                  </Link>
+                </div>
+              </div>
+            ))}
+
+            {campaigns.length === 0 && (
+              <div className="py-20 text-center font-editorial italic text-2xl text-ink/20">
+                No sent broadcasts found in the archive.
+              </div>
+            )}
+          </div>
+        </div>
+      )}
+
+      {activeTab === 'DELIVERABILITY' && deliverability && (
+        <div className="space-y-12">
+          <div className="grid grid-cols-1 md:grid-cols-3 gap-8">
+            <div className="bg-surface border border-border-hairline p-8 space-y-2">
+              <p className="metric-label">Inbox Placement</p>
+              <p className="text-4xl font-serif font-bold text-status-success">{deliverability.inboxPlacement}%</p>
+              <p className="text-[10px] font-mono text-ink/40 uppercase">Primary Inbox</p>
+            </div>
+            <div className="bg-surface border border-border-hairline p-8 space-y-2">
+              <p className="metric-label">Spam Placement</p>
+              <p className="text-4xl font-serif font-bold text-status-warning">{deliverability.spamPlacement}%</p>
+              <p className="text-[10px] font-mono text-ink/40 uppercase">Filtered as Spam</p>
+            </div>
+            <div className="bg-surface border border-border-hairline p-8 space-y-2">
+              <p className="metric-label">Bounce Rate</p>
+              <p className="text-4xl font-serif font-bold">{deliverability.bounceRate}%</p>
+              <p className="text-[10px] font-mono text-ink/40 uppercase">Undeliverable Signals</p>
             </div>
           </div>
-        ))}
 
-        {campaigns.length === 0 && (
-          <div className="py-20 text-center font-editorial italic text-2xl text-ink/20">
-            No sent broadcasts found in the archive.
+          <div className="bg-surface border border-border-hairline p-8">
+            <h3 className="font-sans font-black uppercase tracking-widest text-xs border-b border-ink pb-4 mb-8">Reputation Over Time</h3>
+            <div className="h-80">
+              <ResponsiveContainer width="100%" height="100%">
+                <AreaChart data={deliverability.timeSeries}>
+                  <CartesianGrid strokeDasharray="3 3" stroke="#D4CFC6" vertical={false} />
+                  <XAxis dataKey="date" stroke="#1A1814" fontSize={10} tickLine={false} axisLine={false} />
+                  <YAxis stroke="#1A1814" fontSize={10} tickLine={false} axisLine={false} />
+                  <Tooltip 
+                    contentStyle={{ backgroundColor: '#F5F2EC', border: '1px solid #1A1814', borderRadius: 0 }}
+                    itemStyle={{ fontSize: '10px', textTransform: 'uppercase', fontWeight: 'bold' }}
+                  />
+                  <Area type="monotone" dataKey="inbox" stroke="#2D5A27" fill="#2D5A27" fillOpacity={0.1} />
+                  <Area type="monotone" dataKey="spam" stroke="#9B4A1A" fill="#9B4A1A" fillOpacity={0.1} />
+                </AreaChart>
+              </ResponsiveContainer>
+            </div>
           </div>
-        )}
-      </div>
+        </div>
+      )}
+
+      {activeTab === 'FUNNEL' && funnel && (
+        <div className="space-y-12">
+          <div className="newspaper-grid">
+            <div className="col-span-12 lg:col-span-8 bg-surface border border-border-hairline p-8">
+              <h3 className="font-sans font-black uppercase tracking-widest text-xs border-b border-ink pb-4 mb-8">Conversion Funnel</h3>
+              <div className="space-y-6">
+                {funnel.steps.map((step: any, i: number) => (
+                  <div key={step.name} className="space-y-2">
+                    <div className="flex justify-between items-end">
+                      <p className="text-xs font-bold uppercase tracking-tight">{step.name}</p>
+                      <p className="font-mono text-xs">{step.count.toLocaleString()} signals</p>
+                    </div>
+                    <div className="w-full h-12 bg-bg relative overflow-hidden">
+                      <motion.div 
+                        initial={{ width: 0 }}
+                        animate={{ width: `${step.percentage}%` }}
+                        className="h-full bg-burgundy"
+                      />
+                      <div className="absolute inset-0 flex items-center justify-end pr-4">
+                        <p className="text-[10px] font-black text-white mix-blend-difference">{step.percentage}%</p>
+                      </div>
+                    </div>
+                    {i < funnel.steps.length - 1 && (
+                      <div className="flex justify-center py-2">
+                        <p className="text-[9px] font-black uppercase text-ink/20">Drop-off: {(funnel.steps[i].percentage - funnel.steps[i+1].percentage).toFixed(1)}%</p>
+                      </div>
+                    )}
+                  </div>
+                ))}
+              </div>
+            </div>
+
+            <div className="col-span-12 lg:col-span-4 space-y-8">
+              <div className="bg-ink text-white p-8 space-y-6">
+                <h3 className="font-serif text-2xl font-bold">Efficiency Hub</h3>
+                <div className="space-y-4">
+                  <div className="border-b border-white/10 pb-4">
+                    <p className="text-[10px] font-black uppercase text-white/40">Open-to-Click Rate</p>
+                    <p className="text-3xl font-serif font-bold">14.8%</p>
+                  </div>
+                  <div className="border-b border-white/10 pb-4">
+                    <p className="text-[10px] font-black uppercase text-white/40">Click-to-Convert Rate</p>
+                    <p className="text-3xl font-serif font-bold">28.5%</p>
+                  </div>
+                  <div>
+                    <p className="text-[10px] font-black uppercase text-white/40">Overall Efficiency</p>
+                    <p className="text-3xl font-serif font-bold">1.2%</p>
+                  </div>
+                </div>
+              </div>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {activeTab === 'COHORTS' && cohorts && (
+        <div className="space-y-12">
+          <div className="bg-surface border border-border-hairline p-8 overflow-x-auto">
+            <h3 className="font-sans font-black uppercase tracking-widest text-xs border-b border-ink pb-4 mb-8">Retention Matrix</h3>
+            <table className="w-full text-left border-collapse">
+              <thead>
+                <tr>
+                  <th className="p-4 metric-label border border-border-hairline">Cohort</th>
+                  <th className="p-4 metric-label border border-border-hairline">Size</th>
+                  {[0, 1, 2, 3, 4].map(m => (
+                    <th key={m} className="p-4 metric-label border border-border-hairline">Month {m}</th>
+                  ))}
+                </tr>
+              </thead>
+              <tbody>
+                {cohorts.cohorts.map((cohort: any) => (
+                  <tr key={cohort.month}>
+                    <td className="p-4 font-serif font-bold border border-border-hairline">{cohort.month}</td>
+                    <td className="p-4 font-mono text-xs border border-border-hairline">{cohort.size.toLocaleString()}</td>
+                    {cohort.retention.map((ret: number, i: number) => (
+                      <td 
+                        key={i} 
+                        className="p-4 border border-border-hairline font-mono text-xs text-center"
+                        style={{ backgroundColor: `rgba(139, 26, 26, ${ret / 100 * 0.2})` }}
+                      >
+                        {ret}%
+                      </td>
+                    ))}
+                    {Array.from({ length: 5 - cohort.retention.length }).map((_, i) => (
+                      <td key={i} className="p-4 border border-border-hairline bg-bg/50"></td>
+                    ))}
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+
+          <div className="bg-surface border border-border-hairline p-8">
+            <h3 className="font-sans font-black uppercase tracking-widest text-xs border-b border-ink pb-4 mb-8">Engagement Curve</h3>
+            <div className="h-80">
+              <ResponsiveContainer width="100%" height="100%">
+                <LineChart data={cohorts.cohorts[0].retention.map((v: number, i: number) => ({ month: `M${i}`, retention: v }))}>
+                  <CartesianGrid strokeDasharray="3 3" stroke="#D4CFC6" vertical={false} />
+                  <XAxis dataKey="month" stroke="#1A1814" fontSize={10} tickLine={false} axisLine={false} />
+                  <YAxis stroke="#1A1814" fontSize={10} tickLine={false} axisLine={false} />
+                  <Tooltip 
+                    contentStyle={{ backgroundColor: '#F5F2EC', border: '1px solid #1A1814', borderRadius: 0 }}
+                    itemStyle={{ fontSize: '10px', textTransform: 'uppercase', fontWeight: 'bold' }}
+                  />
+                  <Line type="monotone" dataKey="retention" stroke="#8B1A1A" strokeWidth={2} dot={{ r: 4, fill: '#8B1A1A' }} />
+                </LineChart>
+              </ResponsiveContainer>
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   );
 };
@@ -1282,8 +2153,15 @@ type ContactFormData = z.infer<typeof contactSchema>;
 
 const Audiences = () => {
   const [contacts, setContacts] = useState<Contact[]>([]);
+  const [segments, setSegments] = useState<Segment[]>([]);
   const [isAdding, setIsAdding] = useState(false);
+  const [isAddingSegment, setIsAddingSegment] = useState(false);
   const [isValidating, setIsValidating] = useState(false);
+  const [newSegment, setNewSegment] = useState({ name: '', rules: '[]' });
+  const [activeSegmentId, setActiveSegmentId] = useState<string | null>(null);
+  const [preferenceContact, setPreferenceContact] = useState<any>(null);
+  const [availableLists, setAvailableLists] = useState<any[]>([]);
+  const [selectedLists, setSelectedLists] = useState<string[]>([]);
 
   const { register, handleSubmit, formState: { errors }, reset, watch } = useForm<ContactFormData>({
     resolver: zodResolver(contactSchema),
@@ -1299,11 +2177,41 @@ const Audiences = () => {
 
   useEffect(() => {
     api.getContacts().then(setContacts);
+    api.getSegments().then(setSegments);
   }, []);
+
+  const handleCreateSegment = async (e: React.FormEvent) => {
+    e.preventDefault();
+    await api.addSegment(newSegment);
+    api.getSegments().then(setSegments);
+    setIsAddingSegment(false);
+    setNewSegment({ name: '', rules: '[]' });
+  };
 
   const validateEmail = (email: string) => {
     const re = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
     return re.test(email);
+  };
+
+  const handleManagePreferences = async (contact: Contact) => {
+    const data = await api.getContactPreferences(contact.id);
+    setPreferenceContact(data.contact);
+    setAvailableLists(data.availableLists);
+    setSelectedLists(data.memberships);
+  };
+
+  const handleSavePreferences = async () => {
+    if (!preferenceContact) return;
+    await api.updateContactPreferences(preferenceContact.id, selectedLists);
+    setPreferenceContact(null);
+    api.getContacts().then(setContacts);
+  };
+
+  const handleSavePreferences = async () => {
+    if (!preferenceContact) return;
+    await api.updateContactPreferences(preferenceContact.id, selectedLists);
+    setPreferenceContact(null);
+    api.getContacts().then(setContacts);
   };
 
   const onSubmit = async (data: ContactFormData) => {
@@ -1433,17 +2341,110 @@ const Audiences = () => {
         )}
       </AnimatePresence>
 
+      <AnimatePresence>
+        {isAddingSegment && (
+          <div className="fixed inset-0 z-50 flex items-center justify-center p-10 bg-ink/40 backdrop-blur-sm">
+            <motion.div 
+              initial={{ opacity: 0, scale: 0.95 }}
+              animate={{ opacity: 1, scale: 1 }}
+              exit={{ opacity: 0, scale: 0.95 }}
+              className="bg-bg border border-ink w-full max-w-md p-8 shadow-2xl space-y-6"
+            >
+              <div className="flex justify-between items-center border-b border-border-hairline pb-4">
+                <h2 className="font-serif text-2xl font-bold">New Rule-based Segment</h2>
+                <button onClick={() => setIsAddingSegment(false)} className="text-ink/40 hover:text-burgundy">✕</button>
+              </div>
+
+              <form onSubmit={handleCreateSegment} className="space-y-4">
+                <div className="space-y-1">
+                  <label className="metric-label">Segment Name</label>
+                  <input 
+                    type="text" 
+                    required
+                    placeholder="e.g. High Value Customers"
+                    className="w-full bg-transparent border-b border-border-hairline py-1 font-sans font-bold text-sm outline-none focus:border-burgundy"
+                    value={newSegment.name}
+                    onChange={e => setNewSegment({...newSegment, name: e.target.value})}
+                  />
+                </div>
+
+                <div className="space-y-4">
+                  <p className="text-[10px] font-black uppercase tracking-widest text-ink/40">Criteria Rules</p>
+                  
+                  <div className="space-y-3">
+                    <div className="flex items-center gap-2 p-3 bg-surface border border-border-hairline">
+                      <div className="flex-1">
+                        <p className="text-[10px] font-black uppercase">Engagement Score</p>
+                        <p className="text-xs font-serif italic">is greater than 80</p>
+                      </div>
+                      <Filter size={14} className="text-burgundy" />
+                    </div>
+                    
+                    <div className="flex items-center gap-2 p-3 bg-surface border border-border-hairline">
+                      <div className="flex-1">
+                        <p className="text-[10px] font-black uppercase">Last Interaction</p>
+                        <p className="text-xs font-serif italic">within last 30 days</p>
+                      </div>
+                      <Clock size={14} className="text-burgundy" />
+                    </div>
+                  </div>
+
+                  <div className="p-4 border border-dashed border-border-hairline text-center">
+                    <button type="button" className="text-[10px] font-black uppercase text-ink/40 hover:text-burgundy flex items-center gap-1 mx-auto">
+                      <Plus size={12} /> Add Rule
+                    </button>
+                  </div>
+                </div>
+
+                <div className="pt-4">
+                  <button 
+                    type="submit" 
+                    className="btn-primary w-full py-3 text-sm"
+                  >
+                    Create Segment
+                  </button>
+                </div>
+              </form>
+            </motion.div>
+          </div>
+        )}
+      </AnimatePresence>
+
       <div className="newspaper-grid">
         <div className="col-span-12 lg:col-span-3 space-y-8 border-r border-border-hairline pr-8">
           <div className="space-y-4">
-            <h3 className="font-sans font-black uppercase tracking-widest text-xs border-b border-ink pb-2">Segments</h3>
-            <div className="space-y-2">
-              {['All Contacts', 'Highly Engaged', 'Recent Signups', 'Inactive (90d)'].map((s, i) => (
-                <button key={s} className={cn(
+            <div className="flex justify-between items-end border-b border-ink pb-2">
+              <h3 className="font-sans font-black uppercase tracking-widest text-xs">Segments</h3>
+              <button 
+                onClick={() => setIsAddingSegment(true)}
+                className="text-[10px] font-black uppercase text-burgundy hover:underline"
+              >
+                New
+              </button>
+            </div>
+            <div className="space-y-1">
+              <button 
+                onClick={() => setActiveSegmentId(null)}
+                className={cn(
                   "w-full text-left px-4 py-2 text-sm font-medium transition-colors",
-                  i === 0 ? "bg-burgundy text-white" : "hover:bg-surface"
-                )}>
-                  {s}
+                  activeSegmentId === null ? "bg-burgundy text-white" : "hover:bg-surface"
+                )}
+              >
+                All Contacts
+              </button>
+              {segments.map((s) => (
+                <button 
+                  key={s.id} 
+                  onClick={() => setActiveSegmentId(s.id)}
+                  className={cn(
+                    "w-full text-left px-4 py-2 text-sm font-medium transition-colors flex justify-between items-center group",
+                    activeSegmentId === s.id ? "bg-burgundy text-white" : "hover:bg-surface"
+                  )}
+                >
+                  <span>{s.name}</span>
+                  <div className="flex items-center gap-1 opacity-0 group-hover:opacity-100 transition-opacity">
+                    <Filter size={10} />
+                  </div>
                 </button>
               ))}
             </div>
@@ -1525,7 +2526,16 @@ const Audiences = () => {
                     </div>
                   </td>
                   <td className="px-4 py-4 text-right font-mono text-[10px] text-ink/40 uppercase">
-                    {format(new Date(contact.createdAt), 'MMM d, yyyy')}
+                    <div className="flex items-center justify-end gap-3">
+                      <span>{format(new Date(contact.createdAt), 'MMM d, yyyy')}</span>
+                      <button 
+                        onClick={() => handleManagePreferences(contact)}
+                        className="text-ink/20 hover:text-burgundy opacity-0 group-hover:opacity-100 transition-opacity"
+                        title="Manage Preferences"
+                      >
+                        <Settings size={14} />
+                      </button>
+                    </div>
                   </td>
                 </tr>
               ))}
@@ -1538,6 +2548,67 @@ const Audiences = () => {
           )}
         </div>
       </div>
+
+      {/* Preference Center Modal */}
+      <AnimatePresence>
+        {preferenceContact && (
+          <div className="fixed inset-0 z-50 flex items-center justify-center p-10 bg-ink/40 backdrop-blur-sm">
+            <motion.div 
+              initial={{ opacity: 0, scale: 0.95 }}
+              animate={{ opacity: 1, scale: 1 }}
+              exit={{ opacity: 0, scale: 0.95 }}
+              className="bg-bg border border-ink w-full max-w-md p-8 shadow-2xl space-y-6"
+            >
+              <div className="flex justify-between items-center border-b border-border-hairline pb-4">
+                <div>
+                  <h2 className="font-serif text-2xl font-bold">Subscription Center</h2>
+                  <p className="text-[10px] font-mono text-ink/40 uppercase mt-1">{preferenceContact.email}</p>
+                </div>
+                <button onClick={() => setPreferenceContact(null)} className="text-ink/40 hover:text-burgundy">✕</button>
+              </div>
+
+              <div className="space-y-4">
+                <p className="text-xs font-editorial italic text-ink/60">
+                  Manage which lists this signal is subscribed to. This ensures compliance with GDPR/KVKK preference requirements.
+                </p>
+                
+                <div className="space-y-2 max-h-60 overflow-y-auto pr-2">
+                  {availableLists.map(list => (
+                    <label key={list.id} className="flex items-center justify-between p-3 border border-border-hairline hover:bg-surface transition-colors cursor-pointer">
+                      <div className="flex items-center gap-3">
+                        <input 
+                          type="checkbox" 
+                          className="accent-burgundy"
+                          checked={selectedLists.includes(list.id)}
+                          onChange={(e) => {
+                            if (e.target.checked) {
+                              setSelectedLists([...selectedLists, list.id]);
+                            } else {
+                              setSelectedLists(selectedLists.filter(id => id !== list.id));
+                            }
+                          }}
+                        />
+                        <div>
+                          <p className="text-sm font-bold">{list.name}</p>
+                          <p className="text-[9px] font-mono text-ink/40 uppercase">{list.description || 'General subscription list'}</p>
+                        </div>
+                      </div>
+                    </label>
+                  ))}
+                  {availableLists.length === 0 && (
+                    <p className="text-center py-8 font-editorial italic text-ink/20">No lists available.</p>
+                  )}
+                </div>
+              </div>
+
+              <div className="pt-4 flex gap-4">
+                <button onClick={handleSavePreferences} className="btn-primary flex-1 py-3">Update Preferences</button>
+                <button onClick={() => setPreferenceContact(null)} className="flex-1 py-3 font-sans font-black uppercase tracking-widest text-[10px] border border-border-hairline">Cancel</button>
+              </div>
+            </motion.div>
+          </div>
+        )}
+      </AnimatePresence>
     </div>
   );
 };
@@ -1730,6 +2801,513 @@ const DataLayer = () => {
   );
 };
 
+const Infrastructure = () => {
+  return (
+    <div className="space-y-16">
+      <SectionHeader 
+        title="Deliverability & Infrastructure" 
+        subtitle="Manage sender reputation, compliance, and global suppression lists."
+      />
+
+      <div className="newspaper-grid">
+        {/* Sender Management */}
+        <div className="col-span-12 lg:col-span-4 space-y-8 pr-8 border-r border-border-hairline">
+          <div className="space-y-4">
+            <h3 className="font-sans font-black uppercase tracking-widest text-xs border-b border-ink pb-2">Sender Management</h3>
+            
+            <div className="space-y-6">
+              <div className="space-y-2">
+                <div className="flex justify-between items-center">
+                  <p className="text-sm font-bold font-serif">signal.run.app</p>
+                  <span className="px-1.5 py-0.5 bg-status-success/10 text-status-success text-[8px] font-black uppercase border border-status-success/20">Verified</span>
+                </div>
+                <div className="grid grid-cols-3 gap-1">
+                  {['DKIM', 'SPF', 'DMARC'].map(t => (
+                    <div key={t} className="bg-surface border border-border-hairline p-2 text-center">
+                      <p className="text-[8px] font-black uppercase text-ink/40">{t}</p>
+                      <CheckCircle2 size={10} className="mx-auto mt-1 text-status-success" />
+                    </div>
+                  ))}
+                </div>
+              </div>
+
+              <div className="bg-surface p-4 space-y-3">
+                <p className="text-[10px] font-black uppercase tracking-widest text-ink/40">Dedicated IP Status</p>
+                <div className="flex items-center gap-3">
+                  <div className="w-10 h-10 bg-ink text-white flex items-center justify-center font-mono text-xs">IP</div>
+                  <div>
+                    <p className="text-xs font-bold">192.168.1.104</p>
+                    <p className="text-[9px] text-status-success font-black uppercase">Warm-up: 84% Complete</p>
+                  </div>
+                </div>
+                <div className="w-full h-1 bg-bg">
+                  <div className="h-full bg-burgundy" style={{ width: '84%' }} />
+                </div>
+              </div>
+            </div>
+          </div>
+        </div>
+
+        {/* Suppression Lists */}
+        <div className="col-span-12 lg:col-span-4 space-y-8 px-8 border-r border-border-hairline">
+          <div className="space-y-4">
+            <h3 className="font-sans font-black uppercase tracking-widest text-xs border-b border-ink pb-2">Suppression Lists</h3>
+            
+            <div className="space-y-4">
+              {[
+                { label: 'Global Unsubscribes', count: 124, icon: <Users size={14} /> },
+                { label: 'Bounced Signals', count: 42, icon: <AlertCircle size={14} /> },
+                { label: 'Spam Complaints', count: 3, icon: <Zap size={14} /> },
+                { label: 'Blocked Domains', count: 12, icon: <Globe size={14} /> },
+              ].map(item => (
+                <div key={item.label} className="flex justify-between items-center group cursor-pointer hover:bg-surface p-2 -mx-2 transition-colors">
+                  <div className="flex items-center gap-3">
+                    <div className="text-ink/20 group-hover:text-burgundy">{item.icon}</div>
+                    <p className="text-sm font-medium">{item.label}</p>
+                  </div>
+                  <p className="font-mono text-xs text-ink/40">{item.count}</p>
+                </div>
+              ))}
+            </div>
+
+            <div className="pt-4">
+              <button className="w-full py-3 border border-dashed border-border-hairline text-[10px] font-black uppercase tracking-widest text-ink/40 hover:text-burgundy hover:border-burgundy transition-all">
+                Export Global Suppression List
+              </button>
+            </div>
+          </div>
+        </div>
+
+        {/* Compliance Center */}
+        <div className="col-span-12 lg:col-span-4 space-y-8 pl-8">
+          <div className="space-y-4">
+            <h3 className="font-sans font-black uppercase tracking-widest text-xs border-b border-ink pb-2">Compliance Center</h3>
+            
+            <div className="space-y-6">
+              <div className="space-y-3">
+                <div className="flex items-center justify-between">
+                  <p className="text-xs font-bold uppercase tracking-tight">GDPR / KVKK Tools</p>
+                  <div className="w-8 h-4 bg-status-success rounded-full relative">
+                    <div className="absolute right-0.5 top-0.5 w-3 h-3 bg-white rounded-full" />
+                  </div>
+                </div>
+                <p className="text-[10px] text-ink/60 leading-relaxed">
+                  Automated Right to be Forgotten and Data Portability requests are active.
+                </p>
+              </div>
+
+              <div className="space-y-3">
+                <div className="flex items-center justify-between">
+                  <p className="text-xs font-bold uppercase tracking-tight">Double Opt-in</p>
+                  <div className="w-8 h-4 bg-ink/10 rounded-full relative">
+                    <div className="absolute left-0.5 top-0.5 w-3 h-3 bg-white rounded-full shadow-sm" />
+                  </div>
+                </div>
+                <p className="text-[10px] text-ink/60 leading-relaxed">
+                  Require email confirmation for all new editorial signals.
+                </p>
+              </div>
+
+              <div className="bg-burgundy/5 border border-burgundy/20 p-4 space-y-2">
+                <div className="flex items-center gap-2 text-burgundy">
+                  <AlertCircle size={14} />
+                  <p className="text-[10px] font-black uppercase">Compliance Alert</p>
+                </div>
+                <p className="text-[10px] text-ink/80 italic">
+                  "Your privacy policy was last updated 184 days ago. We recommend a review."
+                </p>
+              </div>
+            </div>
+          </div>
+        </div>
+      </div>
+    </div>
+  );
+};
+
+// --- Automation Components ---
+
+const CustomNode = ({ data, selected }: any) => {
+  const Icon = data.icon || Zap;
+  return (
+    <div className={cn(
+      "bg-bg border p-4 shadow-sm min-w-[180px] transition-all",
+      selected ? "border-burgundy ring-1 ring-burgundy/20" : "border-ink/10"
+    )}>
+      <Handle type="target" position={Position.Top} className="w-2 h-2 bg-burgundy border-none" />
+      <div className="flex items-center gap-3">
+        <div className={cn("p-2", data.color || "bg-ink/5 text-ink")}>
+          <Icon size={16} />
+        </div>
+        <div>
+          <p className="text-[8px] font-black uppercase tracking-widest text-ink/40">{data.type}</p>
+          <p className="text-xs font-bold font-serif">{data.label}</p>
+        </div>
+      </div>
+      <Handle type="source" position={Position.Bottom} className="w-2 h-2 bg-burgundy border-none" />
+    </div>
+  );
+};
+
+const nodeTypes = {
+  custom: CustomNode,
+};
+
+const Automations = () => {
+  const [flows, setFlows] = useState<Flow[]>([]);
+  const [activeFlow, setActiveFlow] = useState<Flow | null>(null);
+  const [isCreating, setIsCreating] = useState(false);
+  const [newFlowName, setNewFlowName] = useState('');
+  const [events, setEvents] = useState<any[]>([]);
+  const [templates, setTemplates] = useState<any[]>([]);
+  const [view, setView] = useState<'FLOWS' | 'EVENTS' | 'TEMPLATES'>('FLOWS');
+
+  // React Flow state
+  const [nodes, setNodes, onNodesChange] = useNodesState([]);
+  const [edges, setEdges, onEdgesChange] = useEdgesState([]);
+
+  useEffect(() => {
+    api.getFlows().then(setFlows);
+    api.getEvents().then(setEvents);
+    api.getWorkflowTemplates().then(setTemplates);
+  }, []);
+
+  const onConnect = useCallback(
+    (params: Connection) => setEdges((eds) => addEdge(params, eds)),
+    [setEdges]
+  );
+
+  const handleCreateFlow = async (e: React.FormEvent) => {
+    e.preventDefault();
+    const flow = await api.addFlow({ name: newFlowName, status: 'DRAFT' });
+    setFlows([flow, ...flows]);
+    setIsCreating(false);
+    setNewFlowName('');
+    openFlow(flow);
+  };
+
+  const handleCreateFromTemplate = async (templateId: string) => {
+    const flow = await api.createFlowFromTemplate(templateId);
+    setFlows([flow, ...flows]);
+    setView('FLOWS');
+    openFlow(flow);
+  };
+
+  const openFlow = (flow: Flow) => {
+    setActiveFlow(flow);
+    setNodes(JSON.parse(flow.nodes));
+    setEdges(JSON.parse(flow.edges));
+  };
+
+  const saveFlow = async () => {
+    if (!activeFlow) return;
+    const updated = await api.updateFlow(activeFlow.id, {
+      nodes: JSON.stringify(nodes),
+      edges: JSON.stringify(edges),
+    });
+    setFlows(flows.map(f => f.id === updated.id ? updated : f));
+    alert("Workflow saved.");
+  };
+
+  const addNode = (type: string, label: string, icon: any, color: string) => {
+    const newNode: Node = {
+      id: `node-${Date.now()}`,
+      type: 'custom',
+      position: { x: Math.random() * 400, y: Math.random() * 400 },
+      data: { label, type, icon, color },
+    };
+    setNodes((nds) => nds.concat(newNode));
+  };
+
+  if (activeFlow) {
+    return (
+      <div className="h-[calc(100vh-120px)] flex flex-col -m-10">
+        <div className="bg-surface border-b border-border-hairline p-6 flex justify-between items-center">
+          <div className="flex items-center gap-4">
+            <button onClick={() => setActiveFlow(null)} className="text-ink/40 hover:text-burgundy">
+              <ChevronRight className="rotate-180" size={20} />
+            </button>
+            <div>
+              <h2 className="font-serif text-2xl font-bold">{activeFlow.name}</h2>
+              <p className="text-[10px] font-mono text-ink/40 uppercase">Status: {activeFlow.status}</p>
+            </div>
+          </div>
+          <div className="flex gap-4">
+            <button onClick={saveFlow} className="btn-secondary">Save Changes</button>
+            <button className="btn-primary">Activate Flow</button>
+          </div>
+        </div>
+        
+        <div className="flex-1 relative">
+          <ReactFlow
+            nodes={nodes}
+            edges={edges}
+            onNodesChange={onNodesChange}
+            onEdgesChange={onEdgesChange}
+            onConnect={onConnect}
+            nodeTypes={nodeTypes}
+            fitView
+          >
+            <Background color="#D4CFC6" gap={20} />
+            <Controls />
+            <MiniMap nodeColor={(n) => n.data?.color === 'bg-burgundy/10' ? '#8B1A1A' : '#1A1814'} />
+            <Panel position="top-right" className="bg-bg border border-ink p-4 shadow-xl space-y-4 w-64">
+              <p className="text-[10px] font-black uppercase tracking-widest border-b border-border-hairline pb-2">Workflow Components</p>
+              
+              <div className="space-y-4">
+                <div>
+                  <p className="text-[8px] font-black uppercase text-ink/40 mb-2">Triggers</p>
+                  <div className="grid grid-cols-2 gap-2">
+                    <button onClick={() => addNode('Trigger', 'On Signup', Zap, 'bg-burgundy/10 text-burgundy')} className="p-2 border border-border-hairline hover:border-burgundy text-[9px] font-bold uppercase">Signup</button>
+                    <button onClick={() => addNode('Trigger', 'Webhook', Globe, 'bg-burgundy/10 text-burgundy')} className="p-2 border border-border-hairline hover:border-burgundy text-[9px] font-bold uppercase">Webhook</button>
+                    <button onClick={() => addNode('Trigger', 'Custom Event', Sparkles, 'bg-burgundy/10 text-burgundy')} className="p-2 border border-border-hairline hover:border-burgundy text-[9px] font-bold uppercase">Event</button>
+                  </div>
+                </div>
+
+                <div>
+                  <p className="text-[8px] font-black uppercase text-ink/40 mb-2">Actions</p>
+                  <div className="grid grid-cols-2 gap-2">
+                    <button onClick={() => addNode('Action', 'Send Email', Mail, 'bg-ink/5 text-ink')} className="p-2 border border-border-hairline hover:border-burgundy text-[9px] font-bold uppercase">Email</button>
+                    <button onClick={() => addNode('Action', 'Add Tag', TagIcon, 'bg-ink/5 text-ink')} className="p-2 border border-border-hairline hover:border-burgundy text-[9px] font-bold uppercase">Tag</button>
+                    <button onClick={() => addNode('Action', 'Wait', Clock, 'bg-ink/5 text-ink')} className="p-2 border border-border-hairline hover:border-burgundy text-[9px] font-bold uppercase">Delay</button>
+                  </div>
+                </div>
+
+                <div>
+                  <p className="text-[8px] font-black uppercase text-ink/40 mb-2">Logic</p>
+                  <div className="grid grid-cols-2 gap-2">
+                    <button onClick={() => addNode('Logic', 'If/Else', Split, 'bg-brass/10 text-brass')} className="p-2 border border-border-hairline hover:border-burgundy text-[9px] font-bold uppercase">Split</button>
+                  </div>
+                </div>
+              </div>
+            </Panel>
+          </ReactFlow>
+        </div>
+      </div>
+    );
+  }
+
+  return (
+    <div className="space-y-16">
+      <SectionHeader 
+        title="Automations" 
+        subtitle="Design visual workflows and track real-time subscriber events."
+        action={
+          <div className="flex gap-4">
+            <div className="flex bg-surface border border-border-hairline p-1">
+              <button 
+                onClick={() => setView('FLOWS')} 
+                className={cn("px-4 py-1.5 text-[10px] font-black uppercase tracking-widest transition-all", view === 'FLOWS' ? "bg-ink text-white" : "text-ink/40 hover:text-ink")}
+              >
+                Workflows
+              </button>
+              <button 
+                onClick={() => setView('TEMPLATES')} 
+                className={cn("px-4 py-1.5 text-[10px] font-black uppercase tracking-widest transition-all", view === 'TEMPLATES' ? "bg-ink text-white" : "text-ink/40 hover:text-ink")}
+              >
+                Templates
+              </button>
+              <button 
+                onClick={() => setView('EVENTS')} 
+                className={cn("px-4 py-1.5 text-[10px] font-black uppercase tracking-widest transition-all", view === 'EVENTS' ? "bg-ink text-white" : "text-ink/40 hover:text-ink")}
+              >
+                Events
+              </button>
+            </div>
+            <button onClick={() => setIsCreating(true)} className="btn-primary flex items-center gap-2">
+              <Plus size={16} /> Create Workflow
+            </button>
+          </div>
+        }
+      />
+
+      {view === 'FLOWS' && (
+        <div className="newspaper-grid">
+          {flows.map(flow => (
+            <div key={flow.id} className="col-span-12 lg:col-span-4 bg-surface border border-border-hairline p-8 group hover:border-burgundy transition-all cursor-pointer" onClick={() => openFlow(flow)}>
+              <div className="flex justify-between items-start mb-6">
+                <div className="w-12 h-12 bg-ink text-white flex items-center justify-center">
+                  <Zap size={24} />
+                </div>
+                <span className={cn(
+                  "px-2 py-0.5 text-[8px] font-black uppercase border",
+                  flow.status === 'ACTIVE' ? "border-status-success text-status-success bg-status-success/5" : "border-ink/20 text-ink/40"
+                )}>
+                  {flow.status}
+                </span>
+              </div>
+              <h3 className="font-serif text-2xl font-bold group-hover:text-burgundy transition-colors">{flow.name}</h3>
+              <p className="text-[10px] font-mono text-ink/40 uppercase mt-2">
+                Last updated {format(new Date(flow.updatedAt), 'MMM d, yyyy')}
+              </p>
+              <div className="mt-8 pt-6 border-t border-border-hairline flex justify-between items-center">
+                <div className="flex -space-x-2">
+                  {[1, 2, 3].map(i => (
+                    <div key={i} className="w-6 h-6 rounded-full border border-bg bg-surface flex items-center justify-center text-[8px] font-bold">
+                      {i}
+                    </div>
+                  ))}
+                </div>
+                <ChevronRight size={16} className="text-ink/20 group-hover:text-burgundy group-hover:translate-x-1 transition-all" />
+              </div>
+            </div>
+          ))}
+
+          {flows.length === 0 && (
+            <div className="col-span-12 py-32 text-center border border-dashed border-border-hairline">
+              <p className="font-editorial italic text-4xl text-ink/20">No automation workflows defined.</p>
+            </div>
+          )}
+        </div>
+      )}
+
+      {view === 'TEMPLATES' && (
+        <div className="space-y-12">
+          {['ONBOARDING', 'ENGAGEMENT', 'REVENUE', 'SUPPORT', 'EVENT_DRIVEN', 'AI_POWERED'].map(category => {
+            const categoryTemplates = templates.filter(t => t.category === category);
+            if (categoryTemplates.length === 0) return null;
+
+            return (
+              <div key={category} className="space-y-6">
+                <h3 className="text-sm font-black uppercase tracking-[0.2em] text-ink/40 border-b border-border-hairline pb-2">{category.replace('_', ' ')}</h3>
+                <div className="grid grid-cols-12 gap-6">
+                  {categoryTemplates.map(template => (
+                    <div key={template.id} className="col-span-12 lg:col-span-4 bg-surface border border-border-hairline p-8 space-y-6 group hover:border-burgundy transition-all">
+                      <div className="flex justify-between items-start">
+                        <div className="w-10 h-10 bg-bg border border-border-hairline flex items-center justify-center text-ink/20 group-hover:text-burgundy">
+                          <FileText size={20} />
+                        </div>
+                        {category === 'AI_POWERED' && (
+                          <span className="px-2 py-0.5 bg-burgundy text-white text-[8px] font-black uppercase tracking-widest">AI</span>
+                        )}
+                      </div>
+                      <div>
+                        <h4 className="text-lg font-serif font-bold text-ink">{template.name}</h4>
+                        <p className="text-xs font-editorial italic text-ink/60 mt-1">{template.description}</p>
+                      </div>
+                      <button 
+                        onClick={() => handleCreateFromTemplate(template.id)}
+                        className="w-full py-2 border border-border-hairline text-[9px] font-black uppercase tracking-widest text-ink/40 group-hover:bg-ink group-hover:text-white group-hover:border-ink transition-all"
+                      >
+                        Use Template
+                      </button>
+                    </div>
+                  ))}
+                </div>
+              </div>
+            );
+          })}
+        </div>
+      )}
+
+      {view === 'EVENTS' && (
+        <div className="space-y-8">
+          <div className="newspaper-grid">
+            <div className="col-span-12 lg:col-span-8">
+              <div className="bg-surface border border-border-hairline p-8">
+                <h3 className="font-sans font-black uppercase tracking-widest text-xs border-b border-ink pb-4 mb-8">Real-time Event Stream</h3>
+                <div className="space-y-4">
+                  {events.map((event, i) => (
+                    <div key={event.id} className="flex items-center gap-6 py-4 border-b border-border-hairline last:border-0">
+                      <div className="w-10 h-10 bg-bg flex items-center justify-center text-burgundy">
+                        {event.type === 'CLICK' ? <MousePointerClick size={16} /> : 
+                         event.type === 'OPEN' ? <Eye size={16} /> : 
+                         event.type === 'PURCHASE' ? <Zap size={16} /> : <Globe size={16} />}
+                      </div>
+                      <div className="flex-1">
+                        <div className="flex justify-between items-start">
+                          <p className="text-sm font-bold">
+                            {event.contact?.firstName} {event.contact?.lastName}
+                          </p>
+                          <p className="text-[10px] font-mono text-ink/40 uppercase">
+                            {format(new Date(event.timestamp), 'HH:mm:ss')}
+                          </p>
+                        </div>
+                        <p className="text-xs text-ink/60">
+                          <span className="font-black uppercase text-[10px] text-burgundy mr-2">{event.type}</span>
+                          {JSON.parse(event.metadata).url || 'Interaction detected'}
+                        </p>
+                      </div>
+                    </div>
+                  ))}
+                </div>
+              </div>
+            </div>
+
+            <div className="col-span-12 lg:col-span-4 space-y-8">
+              <div className="bg-ink text-white p-8 space-y-6">
+                <h3 className="font-serif text-2xl font-bold">Event Analytics</h3>
+                <div className="space-y-4">
+                  {[
+                    { label: 'Page Visits', value: '12.4k', delta: '+12%' },
+                    { label: 'Button Clicks', value: '3.8k', delta: '+5%' },
+                    { label: 'Purchases', value: '412', delta: '+18%' },
+                  ].map(stat => (
+                    <div key={stat.label} className="flex justify-between items-end border-b border-white/10 pb-2">
+                      <div>
+                        <p className="text-[10px] font-black uppercase text-white/40">{stat.label}</p>
+                        <p className="text-3xl font-serif font-bold">{stat.value}</p>
+                      </div>
+                      <p className="text-status-success text-xs font-mono">{stat.delta}</p>
+                    </div>
+                  ))}
+                </div>
+              </div>
+
+              <div className="bg-surface border border-border-hairline p-8 space-y-4">
+                <h4 className="font-serif text-xl font-bold">Custom Events API</h4>
+                <p className="text-xs text-ink/60 leading-relaxed">
+                  Track custom behavioral data using our SDK or Webhook endpoint.
+                </p>
+                <div className="bg-bg p-4 font-mono text-[10px] text-ink/60 overflow-x-auto">
+                  <p className="text-burgundy">POST /api/events</p>
+                  <p className="mt-2">{"{"}</p>
+                  <p className="pl-4">"type": "PURCHASE",</p>
+                  <p className="pl-4">"metadata": {"{ \"amount\": 99 }"}</p>
+                  <p className="pl-4">"contactId": "..."</p>
+                  <p>{"}"}</p>
+                </div>
+              </div>
+            </div>
+          </div>
+        </div>
+      )}
+
+      <AnimatePresence>
+        {isCreating && (
+          <div className="fixed inset-0 z-50 flex items-center justify-center p-10 bg-ink/40 backdrop-blur-sm">
+            <motion.div 
+              initial={{ opacity: 0, scale: 0.95 }}
+              animate={{ opacity: 1, scale: 1 }}
+              exit={{ opacity: 0, scale: 0.95 }}
+              className="bg-bg border border-ink w-full max-w-md p-8 shadow-2xl space-y-6"
+            >
+              <h2 className="font-serif text-2xl font-bold">New Automation Workflow</h2>
+              <form onSubmit={handleCreateFlow} className="space-y-4">
+                <div className="space-y-1">
+                  <label className="metric-label">Workflow Name</label>
+                  <input 
+                    type="text" 
+                    required
+                    placeholder="e.g. Welcome Series"
+                    className="w-full bg-transparent border-b border-border-hairline py-1 font-sans font-bold text-sm outline-none focus:border-burgundy"
+                    value={newFlowName}
+                    onChange={e => setNewFlowName(e.target.value)}
+                  />
+                </div>
+                <div className="pt-4 flex gap-4">
+                  <button type="submit" className="btn-primary flex-1 py-3">Create Workflow</button>
+                  <button type="button" onClick={() => setIsCreating(false)} className="flex-1 py-3 font-sans font-black uppercase tracking-widest text-[10px] border border-border-hairline">Cancel</button>
+                </div>
+              </form>
+            </motion.div>
+          </div>
+        )}
+      </AnimatePresence>
+    </div>
+  );
+};
+
 // --- Main App Layout ---
 
 export default function App() {
@@ -1758,10 +3336,14 @@ export default function App() {
               <Route path="/campaigns" element={<Campaigns />} />
               <Route path="/campaigns/:id" element={<CampaignDetail />} />
               <Route path="/audiences" element={<Audiences />} />
-              <Route path="/data-layer" element={<DataLayer />} />
+              <Route path="/automations" element={<Automations />} />
+              <Route path="/commerce" element={<Commerce />} />
+              <Route path="/collaboration" element={<Collaboration />} />
+              <Route path="/integrations" element={<Integrations />} />
               <Route path="/templates" element={<Templates />} />
-              <Route path="/automations" element={<div className="p-20 text-center font-editorial italic text-4xl text-ink/20">Automation Studio coming soon.</div>} />
               <Route path="/reports" element={<Reports />} />
+              <Route path="/infrastructure" element={<Infrastructure />} />
+              <Route path="/data-layer" element={<DataLayer />} />
               <Route path="*" element={<Navigate to="/" />} />
             </Routes>
           </motion.div>
