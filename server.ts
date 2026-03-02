@@ -916,22 +916,94 @@ app.get("/api/revenue/summary", async (req, res) => {
   res.json({ totalRevenue: revenue._sum.amount || 0 });
 });
 
+app.get("/api/analytics/revenue/attribution", async (req, res) => {
+  const { model = 'LAST_CLICK' } = req.query;
+  const org = await prisma.organization.findFirst();
+  if (!org) return res.status(404).json({ error: "Org not found" });
+
+  const revenues = await prisma.revenue.findMany({
+    where: { organizationId: org.id },
+    include: { campaign: true, flow: true }
+  });
+
+  // In a real app, we'd query events for each revenue record.
+  // For this demo, we'll return mock data based on the requested model.
+  const attributionData = [
+    { name: "Summer Sale", value: model === 'FIRST_CLICK' ? 4500 : 3200, color: "#8884d8" },
+    { name: "Welcome Flow", value: model === 'LINEAR' ? 2800 : 1500, color: "#82ca9d" },
+    { name: "Abandoned Cart", value: model === 'LAST_CLICK' ? 5200 : 3800, color: "#ffc658" },
+    { name: "Product Launch", value: 2100, color: "#ff8042" },
+  ];
+
+  res.json(attributionData);
+});
+
+app.get("/api/analytics/cohorts", async (req, res) => {
+  const org = await prisma.organization.findFirst();
+  
+  // Mock cohort data: Retention of users acquired in specific months
+  const cohorts = [
+    { month: 'Oct 2025', size: 1200, retention: [100, 85, 72, 65, 58] },
+    { month: 'Nov 2025', size: 1500, retention: [100, 82, 68, 61] },
+    { month: 'Dec 2025', size: 2100, retention: [100, 78, 65] },
+    { month: 'Jan 2026', size: 1800, retention: [100, 88] },
+    { month: 'Feb 2026', size: 2400, retention: [100] },
+  ];
+  
+  res.json(cohorts);
+});
+
+app.get("/api/analytics/funnel", async (req, res) => {
+  const org = await prisma.organization.findFirst();
+  
+  // Mock funnel data
+  const funnel = [
+    { step: 'Sent', count: 50000, percentage: 100 },
+    { step: 'Opened', count: 12500, percentage: 25 },
+    { step: 'Clicked', count: 3200, percentage: 6.4 },
+    { step: 'Added to Cart', count: 850, percentage: 1.7 },
+    { step: 'Purchased', count: 210, percentage: 0.42 },
+  ];
+  
+  res.json(funnel);
+});
+
 // Team & Roles
 app.get("/api/team", async (req, res) => {
   const org = await prisma.organization.findFirst();
-  const users = await prisma.user.findMany({ where: { organizationId: org?.id } });
+  const users = await prisma.user.findMany({ 
+    where: { organizationId: org?.id },
+    include: { customRole: true }
+  });
   res.json(users);
 });
 
 app.post("/api/team/invite", async (req, res) => {
-  const { email, name, role } = req.body;
+  const { email, name, role, roleId } = req.body;
   const org = await prisma.organization.findFirst();
   if (!org) return res.status(404).json({ error: "Org not found" });
 
   const newUser = await prisma.user.create({
-    data: { email, name, role, organizationId: org.id }
+    data: { email, name, role, roleId, organizationId: org.id }
   });
   res.json(newUser);
+});
+
+app.get("/api/roles", async (req, res) => {
+  const org = await prisma.organization.findFirst();
+  const roles = await prisma.role.findMany({ where: { organizationId: org?.id } });
+  res.json(roles);
+});
+
+app.post("/api/roles", async (req, res) => {
+  const { name, permissions } = req.body;
+  const org = await prisma.organization.findFirst();
+  if (!org) return res.status(404).json({ error: "Org not found" });
+
+  const role = await prisma.role.create({
+    data: { name, permissions: JSON.stringify(permissions), organizationId: org.id }
+  });
+  res.json(role);
 });
 
 // Brands & Workspaces
@@ -1023,8 +1095,9 @@ app.get("/api/integrations", async (req, res) => {
   });
 
   app.post("/api/contacts/:id/preferences", async (req, res) => {
-    const { listIds } = req.body;
+    const { listIds, source, ipAddress, userAgent } = req.body;
     const contactId = req.params.id;
+    const org = await prisma.organization.findFirst();
     
     // Clear existing
     await prisma.listMembership.deleteMany({ where: { contactId } });
@@ -1035,8 +1108,59 @@ app.get("/api/integrations", async (req, res) => {
         data: listIds.map((listId: string) => ({ contactId, listId }))
       });
     }
+
+    // Log Consent
+    await prisma.consentLog.create({
+      data: {
+        contactId,
+        action: "PREFERENCE_UPDATE",
+        source: source || "PREFERENCE_CENTER",
+        ipAddress,
+        userAgent,
+        organizationId: org?.id || ""
+      }
+    });
     
     res.json({ success: true });
+  });
+
+  // GDPR Compliance Endpoints
+  app.get("/api/compliance/consent-logs", async (req, res) => {
+    const org = await prisma.organization.findFirst();
+    const logs = await prisma.consentLog.findMany({
+      where: { organizationId: org?.id },
+      include: { contact: true },
+      orderBy: { timestamp: "desc" }
+    });
+    res.json(logs);
+  });
+
+  app.get("/api/compliance/data-requests", async (req, res) => {
+    const org = await prisma.organization.findFirst();
+    const requests = await prisma.dataRequest.findMany({
+      where: { organizationId: org?.id },
+      include: { contact: true },
+      orderBy: { createdAt: "desc" }
+    });
+    res.json(requests);
+  });
+
+  app.post("/api/compliance/data-requests", async (req, res) => {
+    const { contactId, type } = req.body;
+    const org = await prisma.organization.findFirst();
+    const request = await prisma.dataRequest.create({
+      data: { contactId, type, organizationId: org?.id || "" }
+    });
+    res.json(request);
+  });
+
+  app.patch("/api/compliance/data-requests/:id", async (req, res) => {
+    const { status } = req.body;
+    const request = await prisma.dataRequest.update({
+      where: { id: req.params.id },
+      data: { status }
+    });
+    res.json(request);
   });
 
   // API & Webhooks

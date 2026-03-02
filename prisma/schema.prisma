@@ -38,6 +38,9 @@ model Organization {
   webhooks    Webhook[]
   revenue     Revenue[]
   workflowTemplates WorkflowTemplate[]
+  roles       Role[]
+  consentLogs ConsentLog[]
+  dataRequests DataRequest[]
 }
 
 model WorkflowTemplate {
@@ -125,6 +128,44 @@ model User {
   email          String       @unique
   name           String
   role           String       @default("VIEWER") // OWNER, ADMIN, EDITOR, ANALYST, VIEWER
+  roleId         String?
+  customRole     Role?        @relation(fields: [roleId], references: [id])
+  organizationId String
+  organization   Organization @relation(fields: [organizationId], references: [id])
+  createdAt      DateTime     @default(now())
+  updatedAt      DateTime     @updatedAt
+}
+
+model Role {
+  id             String       @id @default(cuid())
+  name           String
+  permissions    String       @default("[]") // JSON string of permission keys
+  organizationId String
+  organization   Organization @relation(fields: [organizationId], references: [id])
+  users          User[]
+  createdAt      DateTime     @default(now())
+  updatedAt      DateTime     @updatedAt
+}
+
+model ConsentLog {
+  id             String       @id @default(cuid())
+  contactId      String
+  contact        Contact      @relation(fields: [contactId], references: [id])
+  action         String       // SUBSCRIBE, UNSUBSCRIBE, PREFERENCE_UPDATE
+  source         String       // FORM, PREFERENCE_CENTER, API, MANUAL
+  ipAddress      String?
+  userAgent      String?
+  organizationId String
+  organization   Organization @relation(fields: [organizationId], references: [id])
+  timestamp      DateTime     @default(now())
+}
+
+model DataRequest {
+  id             String       @id @default(cuid())
+  contactId      String
+  contact        Contact      @relation(fields: [contactId], references: [id])
+  type           String       // EXPORT, DELETE
+  status         String       @default("PENDING") // PENDING, PROCESSING, COMPLETED, FAILED
   organizationId String
   organization   Organization @relation(fields: [organizationId], references: [id])
   createdAt      DateTime     @default(now())
@@ -150,6 +191,8 @@ model Contact {
   listMemberships ListMembership[]
   events         Event[]
   revenue        Revenue[]
+  consentLogs    ConsentLog[]
+  dataRequests   DataRequest[]
 
   @@unique([email, organizationId])
 }

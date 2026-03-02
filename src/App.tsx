@@ -314,17 +314,38 @@ const Collaboration = () => {
   const [team, setTeam] = useState<any[]>([]);
   const [brands, setBrands] = useState<any[]>([]);
   const [approvals, setApprovals] = useState<any[]>([]);
+  const [roles, setRoles] = useState<any[]>([]);
+  const [isAddingRole, setIsAddingRole] = useState(false);
+  const [newRole, setNewRole] = useState({ name: '', permissions: [] as string[] });
 
   useEffect(() => {
     api.getTeam().then(setTeam);
     api.getBrands().then(setBrands);
     api.getApprovals().then(setApprovals);
+    api.getRoles().then(setRoles);
   }, []);
 
   const handleApproval = async (id: string, status: 'APPROVED' | 'REJECTED') => {
     await api.updateApprovalStatus(id, status);
     api.getApprovals().then(setApprovals);
   };
+
+  const handleAddRole = async (e: React.FormEvent) => {
+    e.preventDefault();
+    await api.addRole(newRole);
+    api.getRoles().then(setRoles);
+    setIsAddingRole(false);
+    setNewRole({ name: '', permissions: [] });
+  };
+
+  const permissionOptions = [
+    { key: 'campaign:edit', label: 'Edit Campaigns' },
+    { key: 'campaign:send', label: 'Send Campaigns' },
+    { key: 'template:edit', label: 'Edit Templates' },
+    { key: 'contact:edit', label: 'Manage Contacts' },
+    { key: 'automation:edit', label: 'Manage Automations' },
+    { key: 'report:view', label: 'View Reports' },
+  ];
 
   const pendingApprovals = approvals.filter(a => a.status === 'PENDING');
 
@@ -336,118 +357,208 @@ const Collaboration = () => {
       />
 
       <div className="grid grid-cols-12 gap-12">
-        <div className="col-span-12 lg:col-span-7 space-y-8">
-          <div className="flex justify-between items-center">
-            <h3 className="text-2xl font-serif font-bold text-ink">Team Management</h3>
-            <button className="btn-primary py-2 px-4 text-[10px]">Invite Member</button>
-          </div>
-          <div className="border border-border-hairline divide-y divide-border-hairline">
-            {team.map(member => (
-              <div key={member.id} className="p-6 flex items-center justify-between hover:bg-surface transition-colors">
-                <div className="flex items-center gap-4">
-                  <div className="w-10 h-10 bg-burgundy/10 text-burgundy flex items-center justify-center rounded-full font-serif font-bold">
-                    {member.name[0]}
-                  </div>
-                  <div>
-                    <p className="text-sm font-black uppercase tracking-widest text-ink">{member.name}</p>
-                    <p className="text-[10px] font-mono text-ink/40 uppercase">{member.email}</p>
-                  </div>
-                </div>
-                <div className="flex items-center gap-4">
-                  <span className="px-2 py-1 bg-surface border border-border-hairline text-[9px] font-mono text-ink/60 uppercase rounded">
-                    {member.role}
-                  </span>
-                  <button className="text-ink/40 hover:text-burgundy transition-colors"><MoreHorizontal size={16} /></button>
-                </div>
-              </div>
-            ))}
-          </div>
-        </div>
-
-        <div className="col-span-12 lg:col-span-5 space-y-8">
-          <h3 className="text-2xl font-serif font-bold text-ink">Brand Kits</h3>
-          <div className="space-y-6">
-            <div className="bg-surface border border-border-hairline p-8 space-y-6">
-              <div className="flex items-center gap-4">
-                <div className="w-12 h-12 bg-ink flex items-center justify-center text-white font-serif font-black text-xl">S</div>
-                <div>
-                  <p className="text-sm font-black uppercase tracking-widest text-ink">SIGNAL Main</p>
-                  <p className="text-[10px] font-mono text-ink/40 uppercase">Primary Workspace</p>
-                </div>
-              </div>
-              <div className="flex gap-2">
-                <div className="w-8 h-8 bg-burgundy rounded border border-border-hairline"></div>
-                <div className="w-8 h-8 bg-ink rounded border border-border-hairline"></div>
-                <div className="w-8 h-8 bg-bg rounded border border-border-hairline"></div>
-              </div>
-              <button className="w-full py-3 border border-border-hairline text-[10px] font-black uppercase tracking-widest text-ink/60 hover:bg-bg transition-colors">Edit Brand Kit</button>
-            </div>
-            <button className="w-full py-4 border-2 border-dashed border-border-hairline text-[10px] font-black uppercase tracking-widest text-ink/40 hover:border-burgundy hover:text-burgundy transition-all flex items-center justify-center gap-2">
-              <Plus size={14} /> Add New Brand
-            </button>
-          </div>
-        </div>
-      </div>
-
-      <div className="space-y-8">
-        <h3 className="text-2xl font-serif font-bold text-ink">Governance & Approvals</h3>
-        <div className="grid grid-cols-12 gap-6">
-          <div className="col-span-12 lg:col-span-5 bg-surface border border-border-hairline p-6 space-y-4">
+        <div className="col-span-12 lg:col-span-7 space-y-12">
+          {/* Team Management */}
+          <div className="space-y-8">
             <div className="flex justify-between items-center">
-              <p className="text-[10px] font-black uppercase tracking-widest text-ink/40">Pending Review</p>
-              <span className="text-[10px] font-mono text-burgundy font-bold">{pendingApprovals.length} PENDING</span>
+              <h3 className="text-2xl font-serif font-bold text-ink">Team Management</h3>
+              <button className="btn-primary py-2 px-4 text-[10px]">Invite Member</button>
             </div>
-            <div className="space-y-3">
-              {pendingApprovals.length === 0 ? (
-                <p className="text-xs font-editorial italic text-ink/40 py-4 text-center">No pending approvals.</p>
-              ) : (
-                pendingApprovals.map(approval => (
-                  <div key={approval.id} className="p-4 bg-bg border border-border-hairline space-y-3">
-                    <div className="flex justify-between items-start">
-                      <div>
-                        <p className="text-[10px] font-black uppercase tracking-widest text-burgundy">
-                          {approval.templateId ? 'Template' : 'Campaign'}
-                        </p>
-                        <p className="text-sm font-bold text-ink uppercase">
-                          {approval.template?.name || approval.campaign?.name}
-                        </p>
-                        <p className="text-[9px] font-mono text-ink/40 uppercase mt-1">
-                          Requested by {approval.requesterId} • {format(new Date(approval.createdAt), 'MMM d, HH:mm')}
-                        </p>
-                      </div>
+            <div className="border border-border-hairline divide-y divide-border-hairline">
+              {team.map(member => (
+                <div key={member.id} className="p-6 flex items-center justify-between hover:bg-surface transition-colors">
+                  <div className="flex items-center gap-4">
+                    <div className="w-10 h-10 bg-burgundy/10 text-burgundy flex items-center justify-center rounded-full font-serif font-bold">
+                      {member.name[0]}
                     </div>
-                    <div className="flex gap-2 pt-2 border-t border-border-hairline">
-                      <button 
-                        onClick={() => handleApproval(approval.id, 'APPROVED')}
-                        className="flex-1 py-1.5 bg-ink text-white text-[9px] font-black uppercase tracking-widest hover:bg-ink/80 transition-colors"
-                      >
-                        Approve
-                      </button>
-                      <button 
-                        onClick={() => handleApproval(approval.id, 'REJECTED')}
-                        className="flex-1 py-1.5 border border-border-hairline text-[9px] font-black uppercase tracking-widest hover:bg-bg transition-colors"
-                      >
-                        Reject
-                      </button>
+                    <div>
+                      <p className="text-sm font-black uppercase tracking-widest text-ink">{member.name}</p>
+                      <p className="text-[10px] font-mono text-ink/40 uppercase">{member.email}</p>
                     </div>
                   </div>
-                ))
+                  <div className="flex items-center gap-4">
+                    <span className="px-2 py-1 bg-surface border border-border-hairline text-[9px] font-mono text-ink/60 uppercase rounded">
+                      {member.customRole?.name || member.role}
+                    </span>
+                    <button className="text-ink/40 hover:text-burgundy transition-colors"><MoreHorizontal size={16} /></button>
+                  </div>
+                </div>
+              ))}
+            </div>
+          </div>
+
+          {/* Custom Roles */}
+          <div className="space-y-8">
+            <div className="flex justify-between items-center border-b border-ink pb-2">
+              <h3 className="text-2xl font-serif font-bold text-ink">Custom Roles</h3>
+              <button 
+                onClick={() => setIsAddingRole(true)}
+                className="text-[10px] font-black uppercase text-burgundy hover:underline flex items-center gap-1"
+              >
+                <Plus size={12} /> Create Role
+              </button>
+            </div>
+            <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+              {roles.map(role => (
+                <div key={role.id} className="bg-surface border border-border-hairline p-6 space-y-4 group hover:border-burgundy transition-all">
+                  <div className="flex justify-between items-start">
+                    <h4 className="font-serif text-lg font-bold">{role.name}</h4>
+                    <Settings size={14} className="text-ink/20 group-hover:text-burgundy transition-colors" />
+                  </div>
+                  <div className="flex flex-wrap gap-1">
+                    {JSON.parse(role.permissions).map((p: string) => (
+                      <span key={p} className="px-1.5 py-0.5 bg-bg border border-border-hairline text-[8px] font-black uppercase tracking-widest text-ink/60">
+                        {p.replace(':', ' ')}
+                      </span>
+                    ))}
+                  </div>
+                </div>
+              ))}
+              {roles.length === 0 && (
+                <div className="col-span-2 p-12 bg-surface border border-dashed border-border-hairline text-center">
+                  <p className="text-xs font-editorial italic text-ink/40">No custom roles defined. Use roles to define granular permissions.</p>
+                </div>
               )}
             </div>
           </div>
-          <div className="col-span-12 lg:col-span-7 bg-surface border border-border-hairline p-12 flex flex-col items-center justify-center text-center space-y-4">
-            <ShieldCheck size={48} className="text-burgundy/20" />
-            <div>
-              <p className="text-lg font-serif font-bold text-ink">Enterprise Governance</p>
-              <p className="text-sm font-editorial italic text-ink/60 max-w-md mx-auto">Enforce strict approval workflows for all templates and campaigns before they can be used in live dispatches.</p>
+        </div>
+
+        <div className="col-span-12 lg:col-span-5 space-y-12">
+          {/* Brand Kits */}
+          <div className="space-y-8">
+            <h3 className="text-2xl font-serif font-bold text-ink">Brand Kits</h3>
+            <div className="space-y-6">
+              <div className="bg-surface border border-border-hairline p-8 space-y-6">
+                <div className="flex items-center gap-4">
+                  <div className="w-12 h-12 bg-ink flex items-center justify-center text-white font-serif font-black text-xl">S</div>
+                  <div>
+                    <p className="text-sm font-black uppercase tracking-widest text-ink">SIGNAL Main</p>
+                    <p className="text-[10px] font-mono text-ink/40 uppercase">Primary Workspace</p>
+                  </div>
+                </div>
+                <div className="flex gap-2">
+                  <div className="w-8 h-8 bg-burgundy rounded border border-border-hairline"></div>
+                  <div className="w-8 h-8 bg-ink rounded border border-border-hairline"></div>
+                  <div className="w-8 h-8 bg-bg rounded border border-border-hairline"></div>
+                </div>
+                <button className="w-full py-3 border border-border-hairline text-[10px] font-black uppercase tracking-widest text-ink/60 hover:bg-bg transition-colors">Edit Brand Kit</button>
+              </div>
+              <button className="w-full py-4 border-2 border-dashed border-border-hairline text-[10px] font-black uppercase tracking-widest text-ink/40 hover:border-burgundy hover:text-burgundy transition-all flex items-center justify-center gap-2">
+                <Plus size={14} /> Add New Brand
+              </button>
             </div>
-            <div className="flex gap-4">
-              <button className="btn-primary py-2 px-6">Configure Workflow</button>
-              <button className="py-2 px-6 border border-border-hairline text-[10px] font-black uppercase tracking-widest text-ink/60 hover:bg-bg transition-colors">Audit Logs</button>
+          </div>
+
+          {/* Governance */}
+          <div className="space-y-8">
+            <h3 className="text-2xl font-serif font-bold text-ink">Governance & Approvals</h3>
+            <div className="bg-surface border border-border-hairline p-6 space-y-4">
+              <div className="flex justify-between items-center">
+                <p className="text-[10px] font-black uppercase tracking-widest text-ink/40">Pending Review</p>
+                <span className="text-[10px] font-mono text-burgundy font-bold">{pendingApprovals.length} PENDING</span>
+              </div>
+              <div className="space-y-3">
+                {pendingApprovals.length === 0 ? (
+                  <p className="text-xs font-editorial italic text-ink/40 py-4 text-center">No pending approvals.</p>
+                ) : (
+                  pendingApprovals.map(approval => (
+                    <div key={approval.id} className="p-4 bg-bg border border-border-hairline space-y-3">
+                      <div className="flex justify-between items-start">
+                        <div>
+                          <p className="text-[10px] font-black uppercase tracking-widest text-burgundy">
+                            {approval.templateId ? 'Template' : 'Campaign'}
+                          </p>
+                          <p className="text-sm font-bold text-ink uppercase">
+                            {approval.template?.name || approval.campaign?.name}
+                          </p>
+                          <p className="text-[9px] font-mono text-ink/40 uppercase mt-1">
+                            Requested by {approval.requesterId} • {format(new Date(approval.createdAt), 'MMM d, HH:mm')}
+                          </p>
+                        </div>
+                      </div>
+                      <div className="flex gap-2 pt-2 border-t border-border-hairline">
+                        <button 
+                          onClick={() => handleApproval(approval.id, 'APPROVED')}
+                          className="flex-1 py-1.5 bg-ink text-white text-[9px] font-black uppercase tracking-widest hover:bg-ink/80 transition-colors"
+                        >
+                          Approve
+                        </button>
+                        <button 
+                          onClick={() => handleApproval(approval.id, 'REJECTED')}
+                          className="flex-1 py-1.5 border border-border-hairline text-[9px] font-black uppercase tracking-widest hover:bg-bg transition-colors"
+                        >
+                          Reject
+                        </button>
+                      </div>
+                    </div>
+                  ))
+                )}
+              </div>
             </div>
           </div>
         </div>
       </div>
+
+      {/* Add Role Modal */}
+      <AnimatePresence>
+        {isAddingRole && (
+          <div className="fixed inset-0 z-50 flex items-center justify-center p-10 bg-ink/40 backdrop-blur-sm">
+            <motion.div 
+              initial={{ opacity: 0, scale: 0.95 }}
+              animate={{ opacity: 1, scale: 1 }}
+              exit={{ opacity: 0, scale: 0.95 }}
+              className="bg-bg border border-ink w-full max-w-md p-8 shadow-2xl space-y-6"
+            >
+              <div className="flex justify-between items-center border-b border-border-hairline pb-4">
+                <h2 className="font-serif text-2xl font-bold text-ink">Define Custom Role</h2>
+                <button onClick={() => setIsAddingRole(false)} className="text-ink/40 hover:text-burgundy">✕</button>
+              </div>
+
+              <form onSubmit={handleAddRole} className="space-y-6">
+                <div className="space-y-1">
+                  <label className="metric-label">Role Name</label>
+                  <input 
+                    type="text" 
+                    required
+                    placeholder="e.g. Content Editor"
+                    className="w-full bg-transparent border-b border-border-hairline py-1 font-sans font-bold text-sm outline-none focus:border-burgundy"
+                    value={newRole.name}
+                    onChange={e => setNewRole({...newRole, name: e.target.value})}
+                  />
+                </div>
+
+                <div className="space-y-4">
+                  <p className="text-[10px] font-black uppercase tracking-widest text-ink/40">Permissions</p>
+                  <div className="grid grid-cols-2 gap-3">
+                    {permissionOptions.map(opt => (
+                      <label key={opt.key} className="flex items-center gap-2 cursor-pointer group">
+                        <input 
+                          type="checkbox" 
+                          className="accent-burgundy"
+                          checked={newRole.permissions.includes(opt.key)}
+                          onChange={(e) => {
+                            if (e.target.checked) {
+                              setNewRole({...newRole, permissions: [...newRole.permissions, opt.key]});
+                            } else {
+                              setNewRole({...newRole, permissions: newRole.permissions.filter(k => k !== opt.key)});
+                            }
+                          }}
+                        />
+                        <span className="text-xs font-medium group-hover:text-burgundy transition-colors">{opt.label}</span>
+                      </label>
+                    ))}
+                  </div>
+                </div>
+
+                <div className="pt-4 flex gap-4">
+                  <button type="submit" className="btn-primary flex-1 py-3">Create Role</button>
+                  <button type="button" onClick={() => setIsAddingRole(false)} className="flex-1 py-3 font-sans font-black uppercase tracking-widest text-[10px] border border-border-hairline">Cancel</button>
+                </div>
+              </form>
+            </motion.div>
+          </div>
+        )}
+      </AnimatePresence>
     </div>
   );
 };
@@ -1857,30 +1968,180 @@ const CampaignDetail = () => {
   );
 };
 
+const FunnelStepNode = ({ data }: any) => {
+  return (
+    <div className="bg-surface border-2 border-ink p-4 min-w-[180px] shadow-[4px_4px_0px_0px_rgba(26,24,20,1)]">
+      <Handle type="target" position={Position.Top} className="!bg-ink !w-2 !h-2" />
+      <div className="space-y-2">
+        <div className="flex justify-between items-center border-b border-ink/10 pb-1">
+          <p className="text-[8px] font-black uppercase tracking-widest text-ink/40">Step {data.index + 1}</p>
+          <div className="w-2 h-2 rounded-full bg-burgundy" />
+        </div>
+        <p className="text-xs font-bold uppercase">{data.step}</p>
+        <div className="flex justify-between items-end">
+          <p className="text-[10px] font-mono">{data.count.toLocaleString()}</p>
+          <p className="text-[10px] font-black text-burgundy">{data.percentage}%</p>
+        </div>
+      </div>
+      <Handle type="source" position={Position.Bottom} className="!bg-ink !w-2 !h-2" />
+    </div>
+  );
+};
+
+const funnelNodeTypes = {
+  funnelStep: FunnelStepNode,
+};
+
+const FunnelBuilder = ({ initialSteps }: { initialSteps: any[] }) => {
+  const initialNodes: Node[] = initialSteps.map((step, i) => ({
+    id: `step-${i}`,
+    type: 'funnelStep',
+    position: { x: 350, y: i * 150 },
+    data: { ...step, index: i },
+  }));
+
+  const initialEdges: Edge[] = initialSteps.slice(0, -1).map((_, i) => ({
+    id: `edge-${i}`,
+    source: `step-${i}`,
+    target: `step-${i + 1}`,
+    animated: true,
+    style: { stroke: '#1A1814', strokeWidth: 2 },
+  }));
+
+  const [nodes, setNodes, onNodesChange] = useNodesState(initialNodes);
+  const [edges, setEdges, onEdgesChange] = useEdgesState(initialEdges);
+  const [reactFlowInstance, setReactFlowInstance] = useState<any>(null);
+
+  const onConnect = (params: Connection) => setEdges((eds) => addEdge(params, eds));
+
+  const onDragOver = (event: React.DragEvent) => {
+    event.preventDefault();
+    event.dataTransfer.dropEffect = 'move';
+  };
+
+  const onDrop = (event: React.DragEvent) => {
+    event.preventDefault();
+    if (!reactFlowInstance) return;
+
+    const type = event.dataTransfer.getData('application/reactflow');
+    const label = event.dataTransfer.getData('application/reactflow-label');
+
+    if (typeof type === 'undefined' || !type) return;
+
+    const position = reactFlowInstance.screenToFlowPosition({
+      x: event.clientX,
+      y: event.clientY,
+    });
+
+    const newNode: Node = {
+      id: `step-${nodes.length}-${Date.now()}`,
+      type: 'funnelStep',
+      position,
+      data: { step: label, count: 0, percentage: 0, index: nodes.length },
+    };
+
+    setNodes((nds) => nds.concat(newNode));
+  };
+
+  return (
+    <div className="flex h-[700px] bg-bg border border-border-hairline relative group overflow-hidden">
+      {/* Sidebar */}
+      <div className="w-64 bg-surface border-r border-border-hairline p-6 space-y-8 z-10">
+        <div className="space-y-2">
+          <p className="text-[10px] font-black uppercase tracking-widest text-ink/40">Step Library</p>
+          <p className="text-[9px] text-ink/60">Drag events onto the canvas to architect your funnel.</p>
+        </div>
+
+        <div className="space-y-4">
+          {[
+            { label: 'Email Sent', type: 'funnelStep' },
+            { label: 'Email Opened', type: 'funnelStep' },
+            { label: 'Link Clicked', type: 'funnelStep' },
+            { label: 'Page Viewed', type: 'funnelStep' },
+            { label: 'Added to Cart', type: 'funnelStep' },
+            { label: 'Checkout Started', type: 'funnelStep' },
+            { label: 'Order Placed', type: 'funnelStep' },
+          ].map((item) => (
+            <div
+              key={item.label}
+              draggable
+              onDragStart={(e) => {
+                e.dataTransfer.setData('application/reactflow', item.type);
+                e.dataTransfer.setData('application/reactflow-label', item.label);
+                e.dataTransfer.effectAllowed = 'move';
+              }}
+              className="p-3 bg-bg border border-border-hairline text-[10px] font-black uppercase tracking-widest cursor-grab active:cursor-grabbing hover:border-burgundy hover:text-burgundy transition-all flex items-center gap-2"
+            >
+              <div className="w-2 h-2 rounded-full bg-ink" />
+              {item.label}
+            </div>
+          ))}
+        </div>
+
+        <div className="pt-8 border-t border-border-hairline">
+          <div className="bg-burgundy/5 p-4 space-y-2">
+            <p className="text-[9px] font-bold text-burgundy uppercase">AI Recommendation</p>
+            <p className="text-[9px] italic leading-relaxed">
+              "Based on your industry, adding a 'Wishlist' step before 'Add to Cart' typically increases final conversion by 12%."
+            </p>
+          </div>
+        </div>
+      </div>
+
+      {/* Canvas */}
+      <div className="flex-1 relative" onDrop={onDrop} onDragOver={onDragOver}>
+        <div className="absolute top-4 right-4 z-10 flex gap-2">
+          <div className="bg-surface border border-ink px-3 py-1 text-[8px] font-black uppercase tracking-widest shadow-sm">
+            Live Mode: Simulation
+          </div>
+        </div>
+        <ReactFlow
+          nodes={nodes}
+          edges={edges}
+          onNodesChange={onNodesChange}
+          onEdgesChange={onEdgesChange}
+          onConnect={onConnect}
+          onInit={setReactFlowInstance}
+          nodeTypes={funnelNodeTypes}
+          fitView
+        >
+          <Background color="#D4CFC6" gap={20} />
+          <Controls />
+        </ReactFlow>
+      </div>
+    </div>
+  );
+};
+
 const Reports = () => {
   const [campaigns, setCampaigns] = useState<Campaign[]>([]);
   const [loading, setLoading] = useState(true);
-  const [activeTab, setActiveTab] = useState<'PERFORMANCE' | 'DELIVERABILITY' | 'FUNNEL' | 'COHORTS'>('PERFORMANCE');
+  const [activeTab, setActiveTab] = useState<'PERFORMANCE' | 'DELIVERABILITY' | 'FUNNEL' | 'COHORTS' | 'ATTRIBUTION'>('PERFORMANCE');
+  const [funnelMode, setFunnelMode] = useState<'VISUAL' | 'BUILDER'>('VISUAL');
   const [deliverability, setDeliverability] = useState<any>(null);
-  const [funnel, setFunnel] = useState<any>(null);
-  const [cohorts, setCohorts] = useState<any>(null);
+  const [funnel, setFunnel] = useState<any[]>([]);
+  const [cohorts, setCohorts] = useState<any[]>([]);
+  const [attribution, setAttribution] = useState<any[]>([]);
+  const [attributionModel, setAttributionModel] = useState<'LAST_CLICK' | 'FIRST_CLICK' | 'LINEAR'>('LAST_CLICK');
 
   useEffect(() => {
     const fetchData = async () => {
-      const [camps, deliv, fun, coh] = await Promise.all([
+      const [camps, deliv, fun, coh, attr] = await Promise.all([
         api.getCampaigns(),
         api.getDeliverabilityAnalytics(),
         api.getFunnelAnalytics(),
-        api.getCohortAnalytics()
+        api.getCohortAnalytics(),
+        api.getRevenueAttribution(attributionModel)
       ]);
       setCampaigns(camps.filter(c => c.status === 'SENT'));
       setDeliverability(deliv);
       setFunnel(fun);
       setCohorts(coh);
+      setAttribution(attr);
       setLoading(false);
     };
     fetchData();
-  }, []);
+  }, [attributionModel]);
 
   if (loading) return <div className="p-20 text-center font-editorial italic text-3xl">Loading Intelligence Hub...</div>;
 
@@ -1897,6 +2158,7 @@ const Reports = () => {
           { id: 'DELIVERABILITY', label: 'Deliverability' },
           { id: 'FUNNEL', label: 'Funnel Analytics' },
           { id: 'COHORTS', label: 'Cohort Analysis' },
+          { id: 'ATTRIBUTION', label: 'Revenue Attribution' },
         ].map(tab => (
           <button 
             key={tab.id}
@@ -2027,91 +2289,177 @@ const Reports = () => {
         </div>
       )}
 
-      {activeTab === 'FUNNEL' && funnel && (
+      {activeTab === 'FUNNEL' && funnel.length > 0 && (
         <div className="space-y-12">
-          <div className="newspaper-grid">
-            <div className="col-span-12 lg:col-span-8 bg-surface border border-border-hairline p-8">
-              <h3 className="font-sans font-black uppercase tracking-widest text-xs border-b border-ink pb-4 mb-8">Conversion Funnel</h3>
-              <div className="space-y-6">
-                {funnel.steps.map((step: any, i: number) => (
-                  <div key={step.name} className="space-y-2">
-                    <div className="flex justify-between items-end">
-                      <p className="text-xs font-bold uppercase tracking-tight">{step.name}</p>
-                      <p className="font-mono text-xs">{step.count.toLocaleString()} signals</p>
-                    </div>
-                    <div className="w-full h-12 bg-bg relative overflow-hidden">
-                      <motion.div 
-                        initial={{ width: 0 }}
-                        animate={{ width: `${step.percentage}%` }}
-                        className="h-full bg-burgundy"
-                      />
-                      <div className="absolute inset-0 flex items-center justify-end pr-4">
-                        <p className="text-[10px] font-black text-white mix-blend-difference">{step.percentage}%</p>
-                      </div>
-                    </div>
-                    {i < funnel.steps.length - 1 && (
-                      <div className="flex justify-center py-2">
-                        <p className="text-[9px] font-black uppercase text-ink/20">Drop-off: {(funnel.steps[i].percentage - funnel.steps[i+1].percentage).toFixed(1)}%</p>
-                      </div>
-                    )}
+          <div className="flex justify-between items-end border-b border-ink pb-6">
+            <div className="space-y-2">
+              <p className="text-[10px] font-black uppercase tracking-widest text-ink/40">Analytics View</p>
+              <h2 className="text-4xl font-serif font-bold">Funnel Architecture</h2>
+            </div>
+            <div className="flex gap-4">
+              <button 
+                onClick={() => setFunnelMode('VISUAL')}
+                className={cn(
+                  "px-6 py-2 text-[10px] font-black uppercase tracking-widest border transition-all",
+                  funnelMode === 'VISUAL' ? "bg-ink text-white border-ink" : "border-border-hairline text-ink/40 hover:bg-bg"
+                )}
+              >
+                Visualizer
+              </button>
+              <button 
+                onClick={() => setFunnelMode('BUILDER')}
+                className={cn(
+                  "px-6 py-2 text-[10px] font-black uppercase tracking-widest border transition-all",
+                  funnelMode === 'BUILDER' ? "bg-ink text-white border-ink" : "border-border-hairline text-ink/40 hover:bg-bg"
+                )}
+              >
+                Builder
+              </button>
+            </div>
+          </div>
+
+          {funnelMode === 'BUILDER' ? (
+            <div className="space-y-8">
+              <div className="bg-surface border border-border-hairline p-8">
+                <div className="flex justify-between items-center mb-8">
+                  <h3 className="font-sans font-black uppercase tracking-widest text-xs">Draggable Funnel Designer</h3>
+                  <div className="flex gap-2">
+                    <button className="px-4 py-2 bg-ink text-white text-[10px] font-black uppercase tracking-widest">Save Configuration</button>
+                    <button className="px-4 py-2 border border-border-hairline text-[10px] font-black uppercase tracking-widest hover:bg-bg">Reset</button>
                   </div>
-                ))}
+                </div>
+                <FunnelBuilder initialSteps={funnel} />
               </div>
             </div>
+          ) : (
+            <div className="newspaper-grid">
+              <div className="col-span-12 lg:col-span-8 bg-surface border border-border-hairline p-8">
+                <div className="flex justify-between items-center border-b border-ink pb-4 mb-8">
+                  <h3 className="font-sans font-black uppercase tracking-widest text-xs">Conversion Funnel</h3>
+                  <button 
+                    onClick={() => setFunnelMode('BUILDER')}
+                    className="text-[10px] font-black uppercase text-burgundy hover:underline"
+                  >
+                    Edit Funnel Steps
+                  </button>
+                </div>
+                <div className="space-y-6">
+                  {funnel.map((step: any, i: number) => (
+                    <div key={step.step} className="space-y-2">
+                      <div className="flex justify-between items-end">
+                        <div className="flex items-center gap-3">
+                          <span className="w-5 h-5 bg-ink text-white text-[10px] flex items-center justify-center font-bold">{i + 1}</span>
+                          <p className="text-xs font-bold uppercase tracking-tight">{step.step}</p>
+                        </div>
+                        <p className="font-mono text-xs">{step.count.toLocaleString()} signals</p>
+                      </div>
+                      <div className="w-full h-12 bg-bg relative overflow-hidden border border-border-hairline">
+                        <motion.div 
+                          initial={{ width: 0 }}
+                          animate={{ width: `${step.percentage}%` }}
+                          className="h-full bg-burgundy/80"
+                        />
+                        <div className="absolute inset-0 flex items-center justify-end pr-4">
+                          <p className="text-[10px] font-black text-ink">{step.percentage}%</p>
+                        </div>
+                      </div>
+                      {i < funnel.length - 1 && (
+                        <div className="flex flex-col items-center py-2 opacity-40">
+                          <div className="w-[1px] h-4 bg-ink mb-1" />
+                          <p className="text-[9px] font-black uppercase text-burgundy">Drop-off: {(funnel[i].percentage - funnel[i+1].percentage).toFixed(1)}%</p>
+                        </div>
+                      )}
+                    </div>
+                  ))}
+                </div>
+              </div>
 
-            <div className="col-span-12 lg:col-span-4 space-y-8">
-              <div className="bg-ink text-white p-8 space-y-6">
-                <h3 className="font-serif text-2xl font-bold">Efficiency Hub</h3>
-                <div className="space-y-4">
-                  <div className="border-b border-white/10 pb-4">
-                    <p className="text-[10px] font-black uppercase text-white/40">Open-to-Click Rate</p>
-                    <p className="text-3xl font-serif font-bold">14.8%</p>
+              <div className="col-span-12 lg:col-span-4 space-y-8">
+                <div className="bg-ink text-white p-8 space-y-6">
+                  <h3 className="font-serif text-2xl font-bold">Efficiency Hub</h3>
+                  <div className="space-y-4">
+                    <div className="border-b border-white/10 pb-4">
+                      <p className="text-[10px] font-black uppercase text-white/40">Open-to-Click Rate</p>
+                      <p className="text-3xl font-serif font-bold">14.8%</p>
+                    </div>
+                    <div className="border-b border-white/10 pb-4">
+                      <p className="text-[10px] font-black uppercase text-white/40">Click-to-Convert Rate</p>
+                      <p className="text-3xl font-serif font-bold">28.5%</p>
+                    </div>
+                    <div>
+                      <p className="text-[10px] font-black uppercase text-white/40">Overall Efficiency</p>
+                      <p className="text-3xl font-serif font-bold">1.2%</p>
+                    </div>
                   </div>
-                  <div className="border-b border-white/10 pb-4">
-                    <p className="text-[10px] font-black uppercase text-white/40">Click-to-Convert Rate</p>
-                    <p className="text-3xl font-serif font-bold">28.5%</p>
-                  </div>
-                  <div>
-                    <p className="text-[10px] font-black uppercase text-white/40">Overall Efficiency</p>
-                    <p className="text-3xl font-serif font-bold">1.2%</p>
-                  </div>
+                </div>
+                <div className="bg-surface border border-border-hairline p-8 space-y-4">
+                  <p className="text-[10px] font-black uppercase tracking-widest text-ink/40">Optimization Suggestion</p>
+                  <p className="text-xs font-editorial italic text-ink/80 leading-relaxed">
+                    "The largest drop-off (18.6%) occurs between 'Opened' and 'Clicked'. Consider A/B testing your call-to-action buttons to improve transition rates."
+                  </p>
+                  <button className="text-[10px] font-black uppercase text-burgundy hover:underline">Run AI Optimization</button>
                 </div>
               </div>
             </div>
-          </div>
+          )}
         </div>
       )}
 
-      {activeTab === 'COHORTS' && cohorts && (
+      {activeTab === 'COHORTS' && cohorts.length > 0 && (
         <div className="space-y-12">
-          <div className="bg-surface border border-border-hairline p-8 overflow-x-auto">
-            <h3 className="font-sans font-black uppercase tracking-widest text-xs border-b border-ink pb-4 mb-8">Retention Matrix</h3>
+          <div className="flex justify-between items-end border-b border-ink pb-6">
+            <div className="space-y-2">
+              <p className="text-[10px] font-black uppercase tracking-widest text-ink/40">Retention Analysis</p>
+              <h2 className="text-4xl font-serif font-bold">Cohort Heatmap</h2>
+            </div>
+            <div className="flex gap-4">
+              <div className="flex items-center gap-2 px-4 py-2 bg-surface border border-border-hairline">
+                <div className="w-3 h-3 bg-burgundy/10" />
+                <span className="text-[10px] font-mono">Low</span>
+                <div className="w-12 h-3 bg-gradient-to-r from-burgundy/10 to-burgundy" />
+                <span className="text-[10px] font-mono">High</span>
+              </div>
+            </div>
+          </div>
+
+          <div className="bg-surface border border-border-hairline p-8 overflow-x-auto shadow-sm">
+            <div className="flex justify-between items-center mb-8">
+              <h3 className="font-sans font-black uppercase tracking-widest text-xs">Retention Matrix (Heatmap)</h3>
+              <p className="text-[10px] font-mono text-ink/40 uppercase">Last updated: {new Date().toLocaleDateString()}</p>
+            </div>
             <table className="w-full text-left border-collapse">
               <thead>
-                <tr>
-                  <th className="p-4 metric-label border border-border-hairline">Cohort</th>
-                  <th className="p-4 metric-label border border-border-hairline">Size</th>
-                  {[0, 1, 2, 3, 4].map(m => (
-                    <th key={m} className="p-4 metric-label border border-border-hairline">Month {m}</th>
+                <tr className="bg-bg">
+                  <th className="p-6 metric-label border border-border-hairline">Cohort</th>
+                  <th className="p-6 metric-label border border-border-hairline">Size</th>
+                  {[0, 1, 2, 3, 4, 5].map(m => (
+                    <th key={m} className="p-6 metric-label border border-border-hairline text-center">Month {m}</th>
                   ))}
                 </tr>
               </thead>
-              <tbody>
-                {cohorts.cohorts.map((cohort: any) => (
-                  <tr key={cohort.month}>
-                    <td className="p-4 font-serif font-bold border border-border-hairline">{cohort.month}</td>
-                    <td className="p-4 font-mono text-xs border border-border-hairline">{cohort.size.toLocaleString()}</td>
+              <tbody className="divide-y divide-border-hairline">
+                {cohorts.map((cohort: any) => (
+                  <tr key={cohort.month} className="group">
+                    <td className="p-6 font-serif font-bold border border-border-hairline bg-bg/20 group-hover:bg-bg transition-colors">{cohort.month}</td>
+                    <td className="p-6 font-mono text-xs border border-border-hairline text-ink/60">{cohort.size.toLocaleString()}</td>
                     {cohort.retention.map((ret: number, i: number) => (
                       <td 
                         key={i} 
-                        className="p-4 border border-border-hairline font-mono text-xs text-center"
-                        style={{ backgroundColor: `rgba(139, 26, 26, ${ret / 100 * 0.2})` }}
+                        className="p-6 border border-border-hairline font-mono text-xs text-center transition-all hover:scale-105 hover:z-10 relative cursor-default"
+                        style={{ 
+                          backgroundColor: `rgba(139, 26, 26, ${ret / 100})`,
+                          color: ret > 50 ? 'white' : 'black',
+                          fontWeight: ret > 70 ? 'bold' : 'normal'
+                        }}
                       >
-                        {ret}%
+                        <span className="relative z-10">{ret}%</span>
+                        {ret > 80 && (
+                          <div className="absolute inset-0 border-2 border-white/20 pointer-events-none" />
+                        )}
                       </td>
                     ))}
-                    {Array.from({ length: 5 - cohort.retention.length }).map((_, i) => (
-                      <td key={i} className="p-4 border border-border-hairline bg-bg/50"></td>
+                    {Array.from({ length: 6 - cohort.retention.length }).map((_, i) => (
+                      <td key={i} className="p-6 border border-border-hairline bg-bg/30"></td>
                     ))}
                   </tr>
                 ))}
@@ -2119,21 +2467,130 @@ const Reports = () => {
             </table>
           </div>
 
-          <div className="bg-surface border border-border-hairline p-8">
-            <h3 className="font-sans font-black uppercase tracking-widest text-xs border-b border-ink pb-4 mb-8">Engagement Curve</h3>
-            <div className="h-80">
-              <ResponsiveContainer width="100%" height="100%">
-                <LineChart data={cohorts.cohorts[0].retention.map((v: number, i: number) => ({ month: `M${i}`, retention: v }))}>
-                  <CartesianGrid strokeDasharray="3 3" stroke="#D4CFC6" vertical={false} />
-                  <XAxis dataKey="month" stroke="#1A1814" fontSize={10} tickLine={false} axisLine={false} />
-                  <YAxis stroke="#1A1814" fontSize={10} tickLine={false} axisLine={false} />
-                  <Tooltip 
-                    contentStyle={{ backgroundColor: '#F5F2EC', border: '1px solid #1A1814', borderRadius: 0 }}
-                    itemStyle={{ fontSize: '10px', textTransform: 'uppercase', fontWeight: 'bold' }}
-                  />
-                  <Line type="monotone" dataKey="retention" stroke="#8B1A1A" strokeWidth={2} dot={{ r: 4, fill: '#8B1A1A' }} />
-                </LineChart>
-              </ResponsiveContainer>
+          <div className="newspaper-grid">
+            <div className="col-span-12 lg:col-span-8 bg-surface border border-border-hairline p-8">
+              <h3 className="font-sans font-black uppercase tracking-widest text-xs border-b border-ink pb-4 mb-8">Engagement Curve</h3>
+              <div className="h-80">
+                <ResponsiveContainer width="100%" height="100%">
+                  <LineChart data={cohorts[0].retention.map((v: number, i: number) => ({ month: `M${i}`, retention: v }))}>
+                    <CartesianGrid strokeDasharray="3 3" stroke="#D4CFC6" vertical={false} />
+                    <XAxis dataKey="month" stroke="#1A1814" fontSize={10} tickLine={false} axisLine={false} />
+                    <YAxis stroke="#1A1814" fontSize={10} tickLine={false} axisLine={false} />
+                    <Tooltip 
+                      contentStyle={{ backgroundColor: '#F5F2EC', border: '1px solid #1A1814', borderRadius: 0 }}
+                      itemStyle={{ fontSize: '10px', textTransform: 'uppercase', fontWeight: 'bold' }}
+                    />
+                    <Line 
+                      type="monotone" 
+                      dataKey="retention" 
+                      stroke="#8B1A1A" 
+                      strokeWidth={3} 
+                      dot={{ r: 6, fill: '#8B1A1A', strokeWidth: 2, stroke: '#fff' }} 
+                      activeDot={{ r: 8, strokeWidth: 0 }}
+                    />
+                  </LineChart>
+                </ResponsiveContainer>
+              </div>
+            </div>
+            <div className="col-span-12 lg:col-span-4 bg-ink text-white p-8 space-y-6">
+              <h3 className="font-serif text-2xl font-bold">Retention Insights</h3>
+              <div className="space-y-6">
+                <div className="space-y-2">
+                  <p className="text-[10px] font-black uppercase text-white/40">Top Performing Cohort</p>
+                  <p className="text-xl font-bold">{cohorts[0].month}</p>
+                  <p className="text-xs text-white/60">Maintaining {cohorts[0].retention[cohorts[0].retention.length-1]}% retention after 5 months.</p>
+                </div>
+                <div className="space-y-2">
+                  <p className="text-[10px] font-black uppercase text-white/40">Average Decay Rate</p>
+                  <p className="text-xl font-bold">-4.2% / Month</p>
+                  <p className="text-xs text-white/60">Your decay rate is 2% lower than the industry average for editorial newsletters.</p>
+                </div>
+                <div className="pt-6 border-t border-white/10">
+                  <p className="text-xs font-editorial italic text-white/80 leading-relaxed">
+                    "The {cohorts[0].month} cohort shows exceptional resilience. This aligns with the 'Summer Solstice' campaign launch, suggesting high-intent subscriber acquisition during that period."
+                  </p>
+                </div>
+              </div>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {activeTab === 'ATTRIBUTION' && (
+        <div className="space-y-12">
+          <div className="flex justify-between items-center bg-surface border border-border-hairline p-6">
+            <div className="space-y-1">
+              <p className="text-[10px] font-black uppercase tracking-widest text-ink/40">Attribution Model</p>
+              <h4 className="text-xl font-serif font-bold">Revenue Distribution</h4>
+            </div>
+            <div className="flex gap-2">
+              {(['LAST_CLICK', 'FIRST_CLICK', 'LINEAR'] as const).map(m => (
+                <button 
+                  key={m}
+                  onClick={() => setAttributionModel(m)}
+                  className={cn(
+                    "px-4 py-2 text-[10px] font-black uppercase tracking-widest border transition-all",
+                    attributionModel === m ? "bg-ink text-white border-ink" : "border-border-hairline text-ink/40 hover:bg-bg"
+                  )}
+                >
+                  {m.replace('_', ' ')}
+                </button>
+              ))}
+            </div>
+          </div>
+
+          <div className="newspaper-grid">
+            <div className="col-span-12 lg:col-span-7 bg-surface border border-border-hairline p-8">
+              <h3 className="font-sans font-black uppercase tracking-widest text-xs border-b border-ink pb-4 mb-8">Revenue by Channel</h3>
+              <div className="h-96">
+                <ResponsiveContainer width="100%" height="100%">
+                  <BarChart data={attribution} layout="vertical">
+                    <CartesianGrid strokeDasharray="3 3" stroke="#D4CFC6" horizontal={false} />
+                    <XAxis type="number" stroke="#1A1814" fontSize={10} tickLine={false} axisLine={false} />
+                    <YAxis dataKey="name" type="category" stroke="#1A1814" fontSize={10} tickLine={false} axisLine={false} width={120} />
+                    <Tooltip 
+                      contentStyle={{ backgroundColor: '#F5F2EC', border: '1px solid #1A1814', borderRadius: 0 }}
+                      itemStyle={{ fontSize: '10px', textTransform: 'uppercase', fontWeight: 'bold' }}
+                    />
+                    <Bar dataKey="value" radius={[0, 4, 4, 0]}>
+                      {attribution.map((entry, index) => (
+                        <Cell key={`cell-${index}`} fill={entry.color} />
+                      ))}
+                    </Bar>
+                  </BarChart>
+                </ResponsiveContainer>
+              </div>
+            </div>
+
+            <div className="col-span-12 lg:col-span-5 space-y-8">
+              <div className="bg-surface border border-border-hairline p-8">
+                <h3 className="font-sans font-black uppercase tracking-widest text-xs border-b border-ink pb-4 mb-8">Model Comparison</h3>
+                <div className="space-y-6">
+                  {attribution.map(item => (
+                    <div key={item.name} className="flex justify-between items-center">
+                      <div className="flex items-center gap-3">
+                        <div className="w-3 h-3" style={{ backgroundColor: item.color }} />
+                        <p className="text-sm font-bold">{item.name}</p>
+                      </div>
+                      <div className="text-right">
+                        <p className="text-sm font-serif font-bold">${item.value.toLocaleString()}</p>
+                        <p className="text-[9px] font-mono text-ink/40 uppercase">{((item.value / attribution.reduce((a, b) => a + b.value, 0)) * 100).toFixed(1)}% share</p>
+                      </div>
+                    </div>
+                  ))}
+                </div>
+              </div>
+              <div className="bg-burgundy text-white p-8 space-y-4">
+                <p className="text-[10px] font-black uppercase tracking-widest text-white/40">Attribution Insight</p>
+                <p className="text-xs font-editorial italic leading-relaxed">
+                  {attributionModel === 'LAST_CLICK' 
+                    ? "Last-click attribution heavily favors 'Abandoned Cart' flows. This suggests these flows are critical for closing sales in the final decision stage."
+                    : attributionModel === 'FIRST_CLICK'
+                    ? "First-click attribution highlights 'Summer Sale' as the primary acquisition driver. This campaign is excellent at bringing new signals into the funnel."
+                    : "Linear attribution shows a balanced contribution across the lifecycle. Your 'Welcome Flow' maintains consistent value throughout the customer journey."
+                  }
+                </p>
+              </div>
             </div>
           </div>
         </div>
@@ -2198,13 +2655,6 @@ const Audiences = () => {
     setPreferenceContact(data.contact);
     setAvailableLists(data.availableLists);
     setSelectedLists(data.memberships);
-  };
-
-  const handleSavePreferences = async () => {
-    if (!preferenceContact) return;
-    await api.updateContactPreferences(preferenceContact.id, selectedLists);
-    setPreferenceContact(null);
-    api.getContacts().then(setContacts);
   };
 
   const handleSavePreferences = async () => {
@@ -2802,6 +3252,25 @@ const DataLayer = () => {
 };
 
 const Infrastructure = () => {
+  const [consentLogs, setConsentLogs] = useState<any[]>([]);
+  const [dataRequests, setDataRequests] = useState<any[]>([]);
+  const [isRequestingData, setIsRequestingData] = useState(false);
+
+  useEffect(() => {
+    api.getConsentLogs().then(setConsentLogs);
+    api.getDataRequests().then(setDataRequests);
+  }, []);
+
+  const handleDataRequest = async (type: 'EXPORT' | 'DELETE') => {
+    // In a real app, we'd pick a contact. For demo, we'll use a placeholder or the first contact.
+    const contacts = await api.getContacts();
+    if (contacts.length === 0) return alert("No contacts available for demo request.");
+    
+    await api.addDataRequest({ contactId: contacts[0].id, type });
+    api.getDataRequests().then(setDataRequests);
+    alert(`${type} request logged and queued for processing.`);
+  };
+
   return (
     <div className="space-y-16">
       <SectionHeader 
@@ -2894,6 +3363,20 @@ const Infrastructure = () => {
                 <p className="text-[10px] text-ink/60 leading-relaxed">
                   Automated Right to be Forgotten and Data Portability requests are active.
                 </p>
+                <div className="flex gap-2">
+                  <button 
+                    onClick={() => handleDataRequest('EXPORT')}
+                    className="flex-1 py-1.5 border border-border-hairline text-[8px] font-black uppercase tracking-widest hover:bg-surface transition-colors"
+                  >
+                    Data Export
+                  </button>
+                  <button 
+                    onClick={() => handleDataRequest('DELETE')}
+                    className="flex-1 py-1.5 border border-border-hairline text-[8px] font-black uppercase tracking-widest hover:bg-surface transition-colors"
+                  >
+                    Forget Me
+                  </button>
+                </div>
               </div>
 
               <div className="space-y-3">
@@ -2918,6 +3401,93 @@ const Infrastructure = () => {
                 </p>
               </div>
             </div>
+          </div>
+        </div>
+      </div>
+
+      <div className="grid grid-cols-12 gap-12">
+        {/* Consent Logs */}
+        <div className="col-span-12 lg:col-span-7 space-y-8 pr-8 border-r border-border-hairline">
+          <h3 className="text-2xl font-serif font-bold text-ink">Consent Audit Trail</h3>
+          <div className="border border-border-hairline overflow-hidden">
+            <table className="w-full text-left border-collapse">
+              <thead>
+                <tr className="bg-surface border-b border-border-hairline">
+                  <th className="px-4 py-3 text-[10px] font-black uppercase tracking-widest text-ink/40">Signal</th>
+                  <th className="px-4 py-3 text-[10px] font-black uppercase tracking-widest text-ink/40">Action</th>
+                  <th className="px-4 py-3 text-[10px] font-black uppercase tracking-widest text-ink/40">Source</th>
+                  <th className="px-4 py-3 text-[10px] font-black uppercase tracking-widest text-ink/40">Timestamp</th>
+                </tr>
+              </thead>
+              <tbody className="divide-y divide-border-hairline">
+                {consentLogs.length === 0 ? (
+                  <tr>
+                    <td colSpan={4} className="px-4 py-12 text-center font-editorial italic text-ink/20">No consent logs recorded.</td>
+                  </tr>
+                ) : (
+                  consentLogs.map(log => (
+                    <tr key={log.id} className="hover:bg-surface transition-colors">
+                      <td className="px-4 py-3">
+                        <p className="text-xs font-bold">{log.contact?.email}</p>
+                        <p className="text-[8px] font-mono text-ink/40 uppercase">{log.ipAddress || '0.0.0.0'}</p>
+                      </td>
+                      <td className="px-4 py-3">
+                        <span className="px-1.5 py-0.5 bg-ink/5 text-ink text-[8px] font-black uppercase border border-ink/10">
+                          {log.action.replace('_', ' ')}
+                        </span>
+                      </td>
+                      <td className="px-4 py-3 text-[9px] font-mono text-ink/60 uppercase">{log.source}</td>
+                      <td className="px-4 py-3 text-[9px] font-mono text-ink/40 uppercase">
+                        {format(new Date(log.timestamp), 'MMM d, HH:mm:ss')}
+                      </td>
+                    </tr>
+                  ))
+                )}
+              </tbody>
+            </table>
+          </div>
+        </div>
+
+        {/* Data Requests */}
+        <div className="col-span-12 lg:col-span-5 space-y-8">
+          <h3 className="text-2xl font-serif font-bold text-ink">SAR & Data Requests</h3>
+          <div className="space-y-4">
+            {dataRequests.length === 0 ? (
+              <div className="p-12 bg-surface border border-dashed border-border-hairline text-center">
+                <p className="text-xs font-editorial italic text-ink/40">No active Subject Access Requests.</p>
+              </div>
+            ) : (
+              dataRequests.map(req => (
+                <div key={req.id} className="bg-surface border border-border-hairline p-6 space-y-4">
+                  <div className="flex justify-between items-start">
+                    <div>
+                      <p className="text-[10px] font-black uppercase tracking-widest text-burgundy">{req.type} REQUEST</p>
+                      <p className="text-sm font-bold text-ink">{req.contact?.email}</p>
+                      <p className="text-[9px] font-mono text-ink/40 uppercase mt-1">
+                        Received {format(new Date(req.createdAt), 'MMM d, yyyy')}
+                      </p>
+                    </div>
+                    <span className={cn(
+                      "px-2 py-0.5 text-[8px] font-black uppercase border",
+                      req.status === 'COMPLETED' ? "border-status-success text-status-success" : "border-burgundy text-burgundy"
+                    )}>
+                      {req.status}
+                    </span>
+                  </div>
+                  {req.status === 'PENDING' && (
+                    <button 
+                      onClick={async () => {
+                        await api.updateDataRequestStatus(req.id, 'COMPLETED');
+                        api.getDataRequests().then(setDataRequests);
+                      }}
+                      className="w-full py-2 bg-ink text-white text-[9px] font-black uppercase tracking-widest hover:bg-ink/80 transition-colors"
+                    >
+                      Process Request
+                    </button>
+                  )}
+                </div>
+              ))
+            )}
           </div>
         </div>
       </div>
@@ -2949,7 +3519,7 @@ const CustomNode = ({ data, selected }: any) => {
   );
 };
 
-const nodeTypes = {
+const automationNodeTypes = {
   custom: CustomNode,
 };
 
@@ -3045,7 +3615,7 @@ const Automations = () => {
             onNodesChange={onNodesChange}
             onEdgesChange={onEdgesChange}
             onConnect={onConnect}
-            nodeTypes={nodeTypes}
+            nodeTypes={automationNodeTypes}
             fitView
           >
             <Background color="#D4CFC6" gap={20} />

@@ -179,15 +179,6 @@ export const api = {
     return res.json();
   },
 
-  async getFunnelAnalytics(): Promise<any> {
-    const res = await fetch('/api/analytics/funnel');
-    return res.json();
-  },
-
-  async getCohortAnalytics(): Promise<any> {
-    const res = await fetch('/api/analytics/cohorts');
-    return res.json();
-  },
   // AI Assistant
   async generateSubjectLines(topic: string): Promise<string[]> {
     const res = await fetch('/api/ai/subject-lines', {
@@ -267,6 +258,21 @@ export const api = {
     return res.json();
   },
 
+  async getRevenueAttribution(model: string): Promise<any[]> {
+    const res = await fetch(`/api/analytics/revenue/attribution?model=${model}`);
+    return res.json();
+  },
+
+  async getCohortAnalytics(): Promise<any[]> {
+    const res = await fetch('/api/analytics/cohorts');
+    return res.json();
+  },
+
+  async getFunnelAnalytics(): Promise<any[]> {
+    const res = await fetch('/api/analytics/funnel');
+    return res.json();
+  },
+
   // Collaboration
   async getTeam(): Promise<any[]> {
     const res = await fetch('/api/team');
@@ -274,6 +280,18 @@ export const api = {
   },
   async inviteTeamMember(data: any): Promise<any> {
     const res = await fetch('/api/team/invite', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(data),
+    });
+    return res.json();
+  },
+  async getRoles(): Promise<any[]> {
+    const res = await fetch('/api/roles');
+    return res.json();
+  },
+  async addRole(data: any): Promise<any> {
+    const res = await fetch('/api/roles', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify(data),
@@ -339,11 +357,37 @@ export const api = {
     return res.json();
   },
 
-  async updateContactPreferences(id: string, listIds: string[]): Promise<any> {
+  async updateContactPreferences(id: string, listIds: string[], extra?: any): Promise<any> {
     const res = await fetch(`/api/contacts/${id}/preferences`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ listIds }),
+      body: JSON.stringify({ listIds, ...extra }),
+    });
+    return res.json();
+  },
+
+  // Compliance
+  async getConsentLogs(): Promise<any[]> {
+    const res = await fetch('/api/compliance/consent-logs');
+    return res.json();
+  },
+  async getDataRequests(): Promise<any[]> {
+    const res = await fetch('/api/compliance/data-requests');
+    return res.json();
+  },
+  async addDataRequest(data: any): Promise<any> {
+    const res = await fetch('/api/compliance/data-requests', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(data),
+    });
+    return res.json();
+  },
+  async updateDataRequestStatus(id: string, status: string): Promise<any> {
+    const res = await fetch(`/api/compliance/data-requests/${id}`, {
+      method: 'PATCH',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ status }),
     });
     return res.json();
   },

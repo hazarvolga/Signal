@@ -13,8 +13,18 @@ export interface User {
   email: string;
   name: string;
   role: 'OWNER' | 'ADMIN' | 'EDITOR' | 'ANALYST' | 'VIEWER';
+  roleId?: string;
+  customRole?: Role;
   organizationId: string;
   organization?: Organization;
+}
+
+export interface Role {
+  id: string;
+  name: string;
+  permissions: string; // JSON string
+  organizationId: string;
+  createdAt: string;
 }
 
 export interface Contact {
@@ -102,10 +112,13 @@ export interface Webhook {
 
 export interface ApprovalRequest {
   id: string;
-  templateId: string;
+  templateId?: string;
+  campaignId?: string;
   requesterId: string;
   status: 'PENDING' | 'APPROVED' | 'REJECTED';
   comments?: string;
+  template?: Template;
+  campaign?: Campaign;
   createdAt: string;
 }
 
@@ -151,7 +164,7 @@ export interface Campaign {
   testDuration?: number;
   winnerCriteria?: 'OPEN_RATE' | 'CLICK_RATE';
   type: 'REGULAR' | 'AB' | 'AUTOMATED' | 'TRANSACTIONAL';
-  status: 'DRAFT' | 'SCHEDULED' | 'SENDING' | 'SENT' | 'ARCHIVED';
+  status: 'DRAFT' | 'IN_REVIEW' | 'SCHEDULED' | 'SENDING' | 'SENT' | 'ARCHIVED';
   timezone: string;
   scheduledAt?: string;
   sentAt?: string;
@@ -179,6 +192,28 @@ export interface Event {
   campaignId?: string;
   contactId: string;
   timestamp: string;
+}
+
+export interface ConsentLog {
+  id: string;
+  contactId: string;
+  contact?: Contact;
+  action: 'SUBSCRIBE' | 'UNSUBSCRIBE' | 'PREFERENCE_UPDATE' | 'DATA_EXPORT' | 'DATA_DELETE';
+  source: string;
+  ipAddress?: string;
+  userAgent?: string;
+  timestamp: string;
+}
+
+export interface DataRequest {
+  id: string;
+  contactId: string;
+  contact?: Contact;
+  type: 'EXPORT' | 'DELETE';
+  status: 'PENDING' | 'COMPLETED' | 'CANCELLED';
+  organizationId: string;
+  createdAt: string;
+  updatedAt: string;
 }
 
 export interface DashboardStats {
