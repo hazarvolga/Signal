@@ -128,6 +128,7 @@ model User {
   email          String       @unique
   name           String
   role           String       @default("VIEWER") // OWNER, ADMIN, EDITOR, ANALYST, VIEWER
+  status         String       @default("ACTIVE") // PENDING, ACTIVE
   roleId         String?
   customRole     Role?        @relation(fields: [roleId], references: [id])
   organizationId String

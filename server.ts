@@ -27,6 +27,7 @@ async function seed() {
         email: "admin@signal.app",
         name: "Editor in Chief",
         role: "OWNER",
+        status: "ACTIVE",
         organizationId: org.id,
       },
     });
@@ -366,6 +367,92 @@ async function startServer() {
   app.use(express.json());
 
   // --- API Routes ---
+
+  // Team Management
+  app.get("/api/team", async (req, res) => {
+    const org = await prisma.organization.findFirst();
+    if (!org) return res.status(404).json({ error: "Org not found" });
+
+    const users = await prisma.user.findMany({
+      where: { organizationId: org.id },
+      include: { customRole: true },
+      orderBy: { createdAt: "asc" },
+    });
+    res.json(users);
+  });
+
+  app.post("/api/team/invite", async (req, res) => {
+    const org = await prisma.organization.findFirst();
+    if (!org) return res.status(404).json({ error: "Org not found" });
+
+    const { email, name, role } = req.body;
+    
+    try {
+      const newUser = await prisma.user.create({
+        data: {
+          email,
+          name,
+          role: role || "VIEWER",
+          status: "PENDING",
+          organizationId: org.id,
+        },
+      });
+      console.log(`[EMAIL SIMULATION] Invitation sent to ${email}`);
+      res.json(newUser);
+    } catch (e) {
+      res.status(400).json({ error: "User already exists or invalid data" });
+    }
+  });
+
+  app.post("/api/team/:id/activate", async (req, res) => {
+    const { id } = req.params;
+    try {
+      const user = await prisma.user.update({
+        where: { id },
+        data: { status: "ACTIVE" }
+      });
+      res.json(user);
+    } catch (e) {
+      res.status(400).json({ error: "Failed to activate user" });
+    }
+  });
+
+  app.patch("/api/team/:id", async (req, res) => {
+    const { id } = req.params;
+    const { role, name } = req.body;
+
+    try {
+      const updatedUser = await prisma.user.update({
+        where: { id },
+        data: { role, name },
+      });
+      res.json(updatedUser);
+    } catch (e) {
+      res.status(400).json({ error: "Failed to update user" });
+    }
+  });
+
+  app.delete("/api/team/:id", async (req, res) => {
+    const { id } = req.params;
+    
+    // Prevent deleting the last owner (simplified check)
+    const userToDelete = await prisma.user.findUnique({ where: { id } });
+    if (userToDelete?.role === "OWNER") {
+      const ownerCount = await prisma.user.count({ 
+        where: { organizationId: userToDelete.organizationId, role: "OWNER" } 
+      });
+      if (ownerCount <= 1) {
+        return res.status(400).json({ error: "Cannot delete the last owner" });
+      }
+    }
+
+    try {
+      await prisma.user.delete({ where: { id } });
+      res.json({ success: true });
+    } catch (e) {
+      res.status(400).json({ error: "Failed to delete user" });
+    }
+  });
 
   // Auth / Org Context (Simulated for now)
   app.get("/api/me", async (req, res) => {
@@ -782,6 +869,9 @@ async function startServer() {
   app.get("/api/analytics/cohorts", async (req, res) => {
     res.json({
       cohorts: [
+        { month: 'Oct 2023', size: 1050, retention: [100, 82, 70, 62, 55, 50, 48, 45] },
+        { month: 'Nov 2023', size: 1150, retention: [100, 84, 72, 65, 58, 52, 50] },
+        { month: 'Dec 2023', size: 1300, retention: [100, 86, 75, 68, 62, 58] },
         { month: 'Jan 2024', size: 1200, retention: [100, 85, 72, 64, 58] },
         { month: 'Feb 2024', size: 1450, retention: [100, 88, 75, 68] },
         { month: 'Mar 2024', size: 1100, retention: [100, 82, 70] },

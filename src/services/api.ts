@@ -265,12 +265,14 @@ export const api = {
 
   async getCohortAnalytics(): Promise<any[]> {
     const res = await fetch('/api/analytics/cohorts');
-    return res.json();
+    const data = await res.json();
+    return data.cohorts;
   },
 
   async getFunnelAnalytics(): Promise<any[]> {
     const res = await fetch('/api/analytics/funnel');
-    return res.json();
+    const data = await res.json();
+    return data.steps;
   },
 
   // Collaboration
@@ -278,11 +280,29 @@ export const api = {
     const res = await fetch('/api/team');
     return res.json();
   },
-  async inviteTeamMember(data: any): Promise<any> {
+  async inviteTeamMember(data: { email: string, name: string, role: string }): Promise<any> {
     const res = await fetch('/api/team/invite', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify(data),
+    });
+    return res.json();
+  },
+  async activateUser(id: string): Promise<any> {
+    const res = await fetch(`/api/team/${id}/activate`, { method: 'POST' });
+    return res.json();
+  },
+  async updateTeamMember(id: string, data: { role?: string, name?: string }): Promise<any> {
+    const res = await fetch(`/api/team/${id}`, {
+      method: 'PATCH',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(data),
+    });
+    return res.json();
+  },
+  async deleteTeamMember(id: string): Promise<{ success: boolean }> {
+    const res = await fetch(`/api/team/${id}`, {
+      method: 'DELETE',
     });
     return res.json();
   },

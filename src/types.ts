@@ -13,6 +13,7 @@ export interface User {
   email: string;
   name: string;
   role: 'OWNER' | 'ADMIN' | 'EDITOR' | 'ANALYST' | 'VIEWER';
+  status: 'PENDING' | 'ACTIVE';
   roleId?: string;
   customRole?: Role;
   organizationId: string;

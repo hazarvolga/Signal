@@ -28,6 +28,7 @@ import {
   Zap,
   Clock,
   Globe,
+  Shield,
   ShieldCheck,
   Languages,
   Wand2,
@@ -87,18 +88,37 @@ import ReactFlow, {
   Panel
 } from 'reactflow';
 
+import { useAuth, Permission } from './hooks/useAuth';
+
 // --- Utils ---
 function cn(...inputs: ClassValue[]) {
   return twMerge(clsx(inputs));
 }
 
+const ProtectedRoute = ({ 
+  children, 
+  permission 
+}: { 
+  children: React.ReactNode, 
+  permission?: Permission 
+}) => {
+  const { user, loading, hasPermission } = useAuth();
+  
+  if (loading) return <div className="p-20 text-center font-editorial italic text-3xl">Loading dispatch...</div>;
+  if (!user) return <Navigate to="/" />;
+  if (permission && !hasPermission(permission)) return <Navigate to="/" />;
+  
+  return <>{children}</>;
+};
+
 // --- Components ---
 
-const Masthead = ({ user }: { user: User | null }) => {
+const Masthead = () => {
+  const { user } = useAuth();
   const location = useLocation();
   
   return (
-    <header className="bg-bg border-b-2 border-burgundy sticky top-0 z-50">
+    <header className="bg-surface border-b-2 border-burgundy sticky top-0 z-50">
       <div className="max-w-[1600px] mx-auto px-10 h-20 flex items-center justify-between">
         <div className="flex items-center gap-12">
           <Link to="/" className="text-4xl font-serif font-black tracking-tighter text-ink">
@@ -131,7 +151,12 @@ const Masthead = ({ user }: { user: User | null }) => {
             <div className="flex items-center gap-3">
               <div className="text-right hidden sm:block">
                 <p className="text-[10px] font-black uppercase tracking-widest text-ink">{user?.name || 'Loading...'}</p>
-                <p className="text-[9px] font-mono text-ink/40 uppercase">{user?.organization?.name || 'SIGNAL'}</p>
+                <div className="flex items-center justify-end gap-1">
+                  <span className="px-1 bg-burgundy/10 text-burgundy text-[7px] font-mono font-bold rounded uppercase">
+                    {user?.role}
+                  </span>
+                  <p className="text-[9px] font-mono text-ink/40 uppercase">{user?.organization?.name || 'SIGNAL'}</p>
+                </div>
               </div>
               <div className="w-8 h-8 bg-surface border border-border-hairline flex items-center justify-center text-burgundy">
                 <UserIcon size={16} />
@@ -175,6 +200,7 @@ const MetricBlock = ({ label, value, delta, deltaType }: { label: string, value:
 // --- Pages ---
 
 const Commerce = () => {
+  const { hasPermission } = useAuth();
   const [products, setProducts] = useState<any[]>([]);
   const [revenue, setRevenue] = useState<number>(0);
   const [isSyncing, setIsSyncing] = useState(false);
@@ -185,6 +211,7 @@ const Commerce = () => {
   }, []);
 
   const handleSync = async () => {
+    if (!hasPermission('integration:manage')) return;
     setIsSyncing(true);
     await api.syncProducts();
     const updated = await api.getProducts();
@@ -198,14 +225,16 @@ const Commerce = () => {
         title="Commerce & Revenue" 
         subtitle="Monetize your editorial dispatches with integrated product feeds."
         action={
-          <button 
-            onClick={handleSync}
-            disabled={isSyncing}
-            className="btn-primary flex items-center gap-2"
-          >
-            <RefreshCw size={16} className={cn(isSyncing && "animate-spin")} />
-            {isSyncing ? "Syncing..." : "Sync Product Feed"}
-          </button>
+          hasPermission('integration:manage') && (
+            <button 
+              onClick={handleSync}
+              disabled={isSyncing}
+              className="btn-primary flex items-center gap-2"
+            >
+              <RefreshCw size={16} className={cn(isSyncing && "animate-spin")} />
+              {isSyncing ? "Syncing..." : "Sync Product Feed"}
+            </button>
+          )
         }
       />
 
@@ -311,31 +340,67 @@ const Commerce = () => {
 };
 
 const Collaboration = () => {
+  const { hasPermission } = useAuth();
   const [team, setTeam] = useState<any[]>([]);
   const [brands, setBrands] = useState<any[]>([]);
   const [approvals, setApprovals] = useState<any[]>([]);
   const [roles, setRoles] = useState<any[]>([]);
   const [isAddingRole, setIsAddingRole] = useState(false);
+  const [isInviting, setIsInviting] = useState(false);
   const [newRole, setNewRole] = useState({ name: '', permissions: [] as string[] });
+  const [inviteData, setInviteData] = useState({ email: '', name: '', role: 'VIEWER' });
 
   useEffect(() => {
+    refreshData();
+  }, []);
+
+  const refreshData = () => {
     api.getTeam().then(setTeam);
     api.getBrands().then(setBrands);
     api.getApprovals().then(setApprovals);
     api.getRoles().then(setRoles);
-  }, []);
+  };
 
   const handleApproval = async (id: string, status: 'APPROVED' | 'REJECTED') => {
+    if (!hasPermission('campaign:send')) return;
     await api.updateApprovalStatus(id, status);
     api.getApprovals().then(setApprovals);
   };
 
   const handleAddRole = async (e: React.FormEvent) => {
     e.preventDefault();
+    if (!hasPermission('team:manage')) return;
     await api.addRole(newRole);
     api.getRoles().then(setRoles);
     setIsAddingRole(false);
     setNewRole({ name: '', permissions: [] });
+  };
+
+  const handleInvite = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!hasPermission('team:manage')) return;
+    await api.inviteTeamMember(inviteData);
+    refreshData();
+    setIsInviting(false);
+    setInviteData({ email: '', name: '', role: 'VIEWER' });
+  };
+
+  const handleUpdateRole = async (userId: string, role: string) => {
+    if (!hasPermission('team:manage')) return;
+    await api.updateTeamMember(userId, { role });
+    refreshData();
+  };
+
+  const handleDeleteMember = async (userId: string) => {
+    if (!hasPermission('team:manage')) return;
+    if (window.confirm("Are you sure you want to remove this team member?")) {
+      const res = await api.deleteTeamMember(userId);
+      if (res.success) {
+        refreshData();
+      } else {
+        alert("Failed to delete member. Ensure they are not the last owner.");
+      }
+    }
   };
 
   const permissionOptions = [
@@ -362,7 +427,12 @@ const Collaboration = () => {
           <div className="space-y-8">
             <div className="flex justify-between items-center">
               <h3 className="text-2xl font-serif font-bold text-ink">Team Management</h3>
-              <button className="btn-primary py-2 px-4 text-[10px]">Invite Member</button>
+              <button 
+                onClick={() => setIsInviting(true)}
+                className="btn-primary py-2 px-4 text-[10px]"
+              >
+                Invite Member
+              </button>
             </div>
             <div className="border border-border-hairline divide-y divide-border-hairline">
               {team.map(member => (
@@ -372,15 +442,44 @@ const Collaboration = () => {
                       {member.name[0]}
                     </div>
                     <div>
-                      <p className="text-sm font-black uppercase tracking-widest text-ink">{member.name}</p>
+                      <div className="flex items-center gap-2">
+                        <p className="text-sm font-black uppercase tracking-widest text-ink">{member.name}</p>
+                        {member.status === 'PENDING' && (
+                          <span className="px-1.5 py-0.5 bg-amber-100 text-amber-700 text-[8px] font-black uppercase tracking-widest rounded">Pending</span>
+                        )}
+                      </div>
                       <p className="text-[10px] font-mono text-ink/40 uppercase">{member.email}</p>
                     </div>
                   </div>
                   <div className="flex items-center gap-4">
-                    <span className="px-2 py-1 bg-surface border border-border-hairline text-[9px] font-mono text-ink/60 uppercase rounded">
-                      {member.customRole?.name || member.role}
-                    </span>
-                    <button className="text-ink/40 hover:text-burgundy transition-colors"><MoreHorizontal size={16} /></button>
+                    {member.status === 'PENDING' && (
+                      <button 
+                        onClick={async () => {
+                          await api.activateUser(member.id);
+                          refreshData();
+                        }}
+                        className="text-[9px] font-black uppercase tracking-widest text-burgundy border border-burgundy px-2 py-1 hover:bg-burgundy hover:text-white transition-all"
+                      >
+                        Activate
+                      </button>
+                    )}
+                    <select 
+                      value={member.role}
+                      onChange={(e) => handleUpdateRole(member.id, e.target.value)}
+                      className="bg-surface border border-border-hairline text-[9px] font-mono text-ink/60 uppercase rounded px-2 py-1 outline-none focus:border-burgundy"
+                    >
+                      <option value="OWNER">OWNER</option>
+                      <option value="ADMIN">ADMIN</option>
+                      <option value="EDITOR">EDITOR</option>
+                      <option value="ANALYST">ANALYST</option>
+                      <option value="VIEWER">VIEWER</option>
+                    </select>
+                    <button 
+                      onClick={() => handleDeleteMember(member.id)}
+                      className="text-ink/40 hover:text-burgundy transition-colors"
+                    >
+                      <Trash2 size={16} />
+                    </button>
                   </div>
                 </div>
               ))}
@@ -553,6 +652,71 @@ const Collaboration = () => {
                 <div className="pt-4 flex gap-4">
                   <button type="submit" className="btn-primary flex-1 py-3">Create Role</button>
                   <button type="button" onClick={() => setIsAddingRole(false)} className="flex-1 py-3 font-sans font-black uppercase tracking-widest text-[10px] border border-border-hairline">Cancel</button>
+                </div>
+              </form>
+            </motion.div>
+          </div>
+        )}
+      </AnimatePresence>
+
+      {/* Invite Modal */}
+      <AnimatePresence>
+        {isInviting && (
+          <div className="fixed inset-0 z-50 flex items-center justify-center p-10 bg-ink/40 backdrop-blur-sm">
+            <motion.div 
+              initial={{ opacity: 0, scale: 0.95 }}
+              animate={{ opacity: 1, scale: 1 }}
+              exit={{ opacity: 0, scale: 0.95 }}
+              className="bg-bg border border-ink w-full max-w-md p-8 shadow-2xl space-y-6"
+            >
+              <div className="flex justify-between items-center border-b border-border-hairline pb-4">
+                <h2 className="font-serif text-2xl font-bold text-ink">Invite Team Member</h2>
+                <button onClick={() => setIsInviting(false)} className="text-ink/40 hover:text-burgundy">✕</button>
+              </div>
+
+              <form onSubmit={handleInvite} className="space-y-6">
+                <div className="space-y-1">
+                  <label className="metric-label">Full Name</label>
+                  <input 
+                    type="text" 
+                    required
+                    placeholder="e.g. Jane Doe"
+                    className="w-full bg-transparent border-b border-border-hairline py-1 font-sans font-bold text-sm outline-none focus:border-burgundy"
+                    value={inviteData.name}
+                    onChange={e => setInviteData({...inviteData, name: e.target.value})}
+                  />
+                </div>
+
+                <div className="space-y-1">
+                  <label className="metric-label">Email Address</label>
+                  <input 
+                    type="email" 
+                    required
+                    placeholder="jane@example.com"
+                    className="w-full bg-transparent border-b border-border-hairline py-1 font-sans font-bold text-sm outline-none focus:border-burgundy"
+                    value={inviteData.email}
+                    onChange={e => setInviteData({...inviteData, email: e.target.value})}
+                  />
+                </div>
+
+                <div className="space-y-1">
+                  <label className="metric-label">Initial Role</label>
+                  <select 
+                    className="w-full bg-transparent border-b border-border-hairline py-1 font-sans font-bold text-sm outline-none focus:border-burgundy"
+                    value={inviteData.role}
+                    onChange={e => setInviteData({...inviteData, role: e.target.value})}
+                  >
+                    <option value="OWNER">OWNER</option>
+                    <option value="ADMIN">ADMIN</option>
+                    <option value="EDITOR">EDITOR</option>
+                    <option value="ANALYST">ANALYST</option>
+                    <option value="VIEWER">VIEWER</option>
+                  </select>
+                </div>
+
+                <div className="pt-4 flex gap-4">
+                  <button type="submit" className="btn-primary flex-1 py-3">Send Invitation</button>
+                  <button type="button" onClick={() => setIsInviting(false)} className="flex-1 py-3 font-sans font-black uppercase tracking-widest text-[10px] border border-border-hairline">Cancel</button>
                 </div>
               </form>
             </motion.div>
@@ -2116,7 +2280,7 @@ const FunnelBuilder = ({ initialSteps }: { initialSteps: any[] }) => {
 const Reports = () => {
   const [campaigns, setCampaigns] = useState<Campaign[]>([]);
   const [loading, setLoading] = useState(true);
-  const [activeTab, setActiveTab] = useState<'PERFORMANCE' | 'DELIVERABILITY' | 'FUNNEL' | 'COHORTS' | 'ATTRIBUTION'>('PERFORMANCE');
+  const [activeTab, setActiveTab] = useState<'PERFORMANCE' | 'DELIVERABILITY' | 'FUNNEL' | 'COHORTS' | 'ATTRIBUTION' | 'GAP_ANALYSIS'>('PERFORMANCE');
   const [funnelMode, setFunnelMode] = useState<'VISUAL' | 'BUILDER'>('VISUAL');
   const [deliverability, setDeliverability] = useState<any>(null);
   const [funnel, setFunnel] = useState<any[]>([]);
@@ -2159,6 +2323,7 @@ const Reports = () => {
           { id: 'FUNNEL', label: 'Funnel Analytics' },
           { id: 'COHORTS', label: 'Cohort Analysis' },
           { id: 'ATTRIBUTION', label: 'Revenue Attribution' },
+          { id: 'GAP_ANALYSIS', label: 'Enterprise GAP Analysis' },
         ].map(tab => (
           <button 
             key={tab.id}
@@ -2407,109 +2572,244 @@ const Reports = () => {
 
       {activeTab === 'COHORTS' && cohorts.length > 0 && (
         <div className="space-y-12">
+          {(() => {
+            const maxMonths = Math.max(...cohorts.map(c => c.retention.length));
+            const cohortChartData = Array.from({ length: maxMonths }).map((_, i) => {
+              const point: any = { month: `M${i}` };
+              cohorts.forEach(cohort => {
+                if (cohort.retention[i] !== undefined) {
+                  point[cohort.month] = cohort.retention[i];
+                }
+              });
+              return point;
+            });
+            const colors = ['#8B1A1A', '#1A1814', '#D4CFC6', '#2D5A27', '#9B4A1A', '#4A1A9B'];
+
+            return (
+              <>
+                <div className="flex justify-between items-end border-b border-ink pb-6">
+                  <div className="space-y-2">
+                    <p className="text-[10px] font-black uppercase tracking-widest text-ink/40">Retention Analysis</p>
+                    <h2 className="text-4xl font-serif font-bold">Cohort Heatmap</h2>
+                  </div>
+                  <div className="flex gap-4">
+                    <div className="flex items-center gap-2 px-4 py-2 bg-surface border border-border-hairline">
+                      <div className="w-3 h-3 bg-burgundy/10" />
+                      <span className="text-[10px] font-mono">Low</span>
+                      <div className="w-12 h-3 bg-gradient-to-r from-burgundy/10 to-burgundy" />
+                      <span className="text-[10px] font-mono">High</span>
+                    </div>
+                  </div>
+                </div>
+
+                <div className="bg-surface border border-border-hairline p-8 overflow-x-auto shadow-sm">
+                  <div className="flex justify-between items-center mb-8">
+                    <h3 className="font-sans font-black uppercase tracking-widest text-xs">Retention Matrix (Heatmap)</h3>
+                    <p className="text-[10px] font-mono text-ink/40 uppercase">Last updated: {new Date().toLocaleDateString()}</p>
+                  </div>
+                  <table className="w-full text-left border-collapse">
+                    <thead>
+                      <tr className="bg-bg">
+                        <th className="p-6 metric-label border border-border-hairline">Cohort</th>
+                        <th className="p-6 metric-label border border-border-hairline">Size</th>
+                        {Array.from({ length: maxMonths }).map((_, m) => (
+                          <th key={m} className="p-6 metric-label border border-border-hairline text-center">Month {m}</th>
+                        ))}
+                      </tr>
+                    </thead>
+                    <tbody className="divide-y divide-border-hairline">
+                      {cohorts.map((cohort: any) => (
+                        <tr key={cohort.month} className="group">
+                          <td className="p-6 font-serif font-bold border border-border-hairline bg-bg/20 group-hover:bg-bg transition-colors">{cohort.month}</td>
+                          <td className="p-6 font-mono text-xs border border-border-hairline text-ink/60">{cohort.size.toLocaleString()}</td>
+                          {cohort.retention.map((ret: number, i: number) => (
+                            <td 
+                              key={i} 
+                              className="p-6 border border-border-hairline font-mono text-xs text-center transition-all hover:scale-105 hover:z-10 relative cursor-default"
+                              style={{ 
+                                backgroundColor: `rgba(139, 26, 26, ${ret / 100})`,
+                                color: ret > 50 ? 'white' : 'black',
+                                fontWeight: ret > 70 ? 'bold' : 'normal'
+                              }}
+                            >
+                              <span className="relative z-10">{ret}%</span>
+                              {ret > 80 && (
+                                <div className="absolute inset-0 border-2 border-white/20 pointer-events-none" />
+                              )}
+                            </td>
+                          ))}
+                          {Array.from({ length: maxMonths - cohort.retention.length }).map((_, i) => (
+                            <td key={i} className="p-6 border border-border-hairline bg-bg/30"></td>
+                          ))}
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
+                </div>
+
+                <div className="newspaper-grid">
+                  <div className="col-span-12 lg:col-span-8 bg-surface border border-border-hairline p-8">
+                    <h3 className="font-sans font-black uppercase tracking-widest text-xs border-b border-ink pb-4 mb-8">Engagement Curves (All Cohorts)</h3>
+                    <div className="h-80">
+                      <ResponsiveContainer width="100%" height="100%">
+                        <LineChart data={cohortChartData}>
+                          <CartesianGrid strokeDasharray="3 3" stroke="#D4CFC6" vertical={false} />
+                          <XAxis dataKey="month" stroke="#1A1814" fontSize={10} tickLine={false} axisLine={false} />
+                          <YAxis stroke="#1A1814" fontSize={10} tickLine={false} axisLine={false} unit="%" />
+                          <Tooltip 
+                            contentStyle={{ backgroundColor: '#F5F2EC', border: '1px solid #1A1814', borderRadius: 0 }}
+                            itemStyle={{ fontSize: '10px', textTransform: 'uppercase', fontWeight: 'bold' }}
+                          />
+                          {cohorts.map((cohort, idx) => (
+                            <Line 
+                              key={cohort.month}
+                              type="monotone" 
+                              dataKey={cohort.month} 
+                              stroke={colors[idx % colors.length]} 
+                              strokeWidth={idx === 0 ? 3 : 1.5}
+                              dot={idx === 0 ? { r: 4, fill: colors[idx % colors.length] } : false}
+                              activeDot={{ r: 6 }}
+                            />
+                          ))}
+                        </LineChart>
+                      </ResponsiveContainer>
+                    </div>
+                  </div>
+                  <div className="col-span-12 lg:col-span-4 bg-ink text-white p-8 space-y-6">
+                    <h3 className="font-serif text-2xl font-bold">Retention Insights</h3>
+                    <div className="space-y-6">
+                      <div className="space-y-2">
+                        <p className="text-[10px] font-black uppercase text-white/40">Top Performing Cohort</p>
+                        <p className="text-xl font-bold">{cohorts.sort((a: any, b: any) => (b.retention[1] || 0) - (a.retention[1] || 0))[0].month}</p>
+                        <p className="text-[10px] font-mono text-status-success uppercase">Highest Month 1 Retention</p>
+                      </div>
+                      <div className="space-y-2">
+                        <p className="text-[10px] font-black uppercase text-white/40">Avg. 3-Month Retention</p>
+                        <p className="text-xl font-bold">
+                          {(cohorts.reduce((acc: number, c: any) => acc + (c.retention[3] || 0), 0) / cohorts.filter((c: any) => c.retention[3] !== undefined).length).toFixed(1)}%
+                        </p>
+                        <p className="text-[10px] font-mono text-white/40 uppercase">Across all valid signals</p>
+                      </div>
+                      <div className="pt-4 border-t border-white/10">
+                        <p className="text-xs font-editorial italic text-white/60 leading-relaxed">
+                          "Your Dec 2023 cohort shows a significantly higher long-term retention curve. Analyzing the acquisition source for this period could reveal high-value subscriber patterns."
+                        </p>
+                      </div>
+                    </div>
+                  </div>
+                </div>
+              </>
+            );
+          })()}
+        </div>
+      )}
+
+      {activeTab === 'GAP_ANALYSIS' && (
+        <div className="space-y-12 animate-in fade-in duration-700">
           <div className="flex justify-between items-end border-b border-ink pb-6">
             <div className="space-y-2">
-              <p className="text-[10px] font-black uppercase tracking-widest text-ink/40">Retention Analysis</p>
-              <h2 className="text-4xl font-serif font-bold">Cohort Heatmap</h2>
+              <p className="text-[10px] font-black uppercase tracking-widest text-ink/40">Strategic Assessment</p>
+              <h2 className="text-4xl font-serif font-bold">Enterprise GAP Analysis</h2>
             </div>
-            <div className="flex gap-4">
-              <div className="flex items-center gap-2 px-4 py-2 bg-surface border border-border-hairline">
-                <div className="w-3 h-3 bg-burgundy/10" />
-                <span className="text-[10px] font-mono">Low</span>
-                <div className="w-12 h-3 bg-gradient-to-r from-burgundy/10 to-burgundy" />
-                <span className="text-[10px] font-mono">High</span>
+            <div className="flex items-center gap-6">
+              <button className="flex items-center gap-2 px-4 py-2 border border-ink text-[10px] font-black uppercase tracking-widest hover:bg-ink hover:text-white transition-all">
+                <ExternalLink size={14} />
+                Export PDF Report
+              </button>
+              <div className="text-right">
+                <p className="text-[10px] font-black uppercase text-ink/40">Readiness Score</p>
+                <p className="text-2xl font-serif font-bold text-burgundy">68/100</p>
+              </div>
+              <div className="w-16 h-16 rounded-full border-4 border-burgundy/20 flex items-center justify-center relative">
+                <div className="absolute inset-0 border-4 border-burgundy rounded-full" style={{ clipPath: 'polygon(0 0, 100% 0, 100% 68%, 0 68%)' }} />
+                <span className="text-xs font-bold">68%</span>
               </div>
             </div>
-          </div>
-
-          <div className="bg-surface border border-border-hairline p-8 overflow-x-auto shadow-sm">
-            <div className="flex justify-between items-center mb-8">
-              <h3 className="font-sans font-black uppercase tracking-widest text-xs">Retention Matrix (Heatmap)</h3>
-              <p className="text-[10px] font-mono text-ink/40 uppercase">Last updated: {new Date().toLocaleDateString()}</p>
-            </div>
-            <table className="w-full text-left border-collapse">
-              <thead>
-                <tr className="bg-bg">
-                  <th className="p-6 metric-label border border-border-hairline">Cohort</th>
-                  <th className="p-6 metric-label border border-border-hairline">Size</th>
-                  {[0, 1, 2, 3, 4, 5].map(m => (
-                    <th key={m} className="p-6 metric-label border border-border-hairline text-center">Month {m}</th>
-                  ))}
-                </tr>
-              </thead>
-              <tbody className="divide-y divide-border-hairline">
-                {cohorts.map((cohort: any) => (
-                  <tr key={cohort.month} className="group">
-                    <td className="p-6 font-serif font-bold border border-border-hairline bg-bg/20 group-hover:bg-bg transition-colors">{cohort.month}</td>
-                    <td className="p-6 font-mono text-xs border border-border-hairline text-ink/60">{cohort.size.toLocaleString()}</td>
-                    {cohort.retention.map((ret: number, i: number) => (
-                      <td 
-                        key={i} 
-                        className="p-6 border border-border-hairline font-mono text-xs text-center transition-all hover:scale-105 hover:z-10 relative cursor-default"
-                        style={{ 
-                          backgroundColor: `rgba(139, 26, 26, ${ret / 100})`,
-                          color: ret > 50 ? 'white' : 'black',
-                          fontWeight: ret > 70 ? 'bold' : 'normal'
-                        }}
-                      >
-                        <span className="relative z-10">{ret}%</span>
-                        {ret > 80 && (
-                          <div className="absolute inset-0 border-2 border-white/20 pointer-events-none" />
-                        )}
-                      </td>
-                    ))}
-                    {Array.from({ length: 6 - cohort.retention.length }).map((_, i) => (
-                      <td key={i} className="p-6 border border-border-hairline bg-bg/30"></td>
-                    ))}
-                  </tr>
-                ))}
-              </tbody>
-            </table>
           </div>
 
           <div className="newspaper-grid">
-            <div className="col-span-12 lg:col-span-8 bg-surface border border-border-hairline p-8">
-              <h3 className="font-sans font-black uppercase tracking-widest text-xs border-b border-ink pb-4 mb-8">Engagement Curve</h3>
-              <div className="h-80">
-                <ResponsiveContainer width="100%" height="100%">
-                  <LineChart data={cohorts[0].retention.map((v: number, i: number) => ({ month: `M${i}`, retention: v }))}>
-                    <CartesianGrid strokeDasharray="3 3" stroke="#D4CFC6" vertical={false} />
-                    <XAxis dataKey="month" stroke="#1A1814" fontSize={10} tickLine={false} axisLine={false} />
-                    <YAxis stroke="#1A1814" fontSize={10} tickLine={false} axisLine={false} />
-                    <Tooltip 
-                      contentStyle={{ backgroundColor: '#F5F2EC', border: '1px solid #1A1814', borderRadius: 0 }}
-                      itemStyle={{ fontSize: '10px', textTransform: 'uppercase', fontWeight: 'bold' }}
-                    />
-                    <Line 
-                      type="monotone" 
-                      dataKey="retention" 
-                      stroke="#8B1A1A" 
-                      strokeWidth={3} 
-                      dot={{ r: 6, fill: '#8B1A1A', strokeWidth: 2, stroke: '#fff' }} 
-                      activeDot={{ r: 8, strokeWidth: 0 }}
-                    />
-                  </LineChart>
-                </ResponsiveContainer>
+            <div className="col-span-12 lg:col-span-8 space-y-8">
+              <div className="bg-surface border border-border-hairline p-8 shadow-sm relative overflow-hidden">
+                <div className="absolute top-0 right-0 bg-burgundy text-white px-4 py-1 text-[8px] font-black uppercase tracking-widest">Confidential</div>
+                <h3 className="font-sans font-black uppercase tracking-widest text-xs border-b border-ink pb-4 mb-6">Executive Summary</h3>
+                <p className="font-serif text-lg leading-relaxed text-ink/80 italic">
+                  "Platformun editoryal zekası (Editorial Intelligence) pazarın çok üzerinde olsa da, kurumsal güven (Enterprise Trust) katmanında katedilmesi gereken bir yol bulunmaktadır. Q2 sonuna kadar Güvenlik fazının tamamlanması, pazar payını %40 oranında artırabilir."
+                </p>
+              </div>
+
+              <div className="bg-surface border border-border-hairline p-8 shadow-sm">
+                <h3 className="font-sans font-black uppercase tracking-widest text-xs border-b border-ink pb-4 mb-6">Gap Matrix</h3>
+                <div className="overflow-x-auto">
+                  <table className="w-full text-left border-collapse">
+                    <thead>
+                      <tr className="bg-bg/50">
+                        <th className="p-4 metric-label border border-border-hairline">Kategori</th>
+                        <th className="p-4 metric-label border border-border-hairline">Mevcut Durum</th>
+                        <th className="p-4 metric-label border border-border-hairline">Enterprise Hedef</th>
+                        <th className="p-4 metric-label border border-border-hairline">Öncelik</th>
+                      </tr>
+                    </thead>
+                    <tbody className="text-xs font-mono">
+                      <tr>
+                        <td className="p-4 border border-border-hairline font-bold">Güvenlik</td>
+                        <td className="p-4 border border-border-hairline text-ink/60">Mock Auth</td>
+                        <td className="p-4 border border-border-hairline">SSO, MFA, RBAC</td>
+                        <td className="p-4 border border-border-hairline text-burgundy font-bold">KRİTİK</td>
+                      </tr>
+                      <tr>
+                        <td className="p-4 border border-border-hairline font-bold">Veri Altyapısı</td>
+                        <td className="p-4 border border-border-hairline text-ink/60">In-Memory Mock</td>
+                        <td className="p-4 border border-border-hairline">PostgreSQL, Redis</td>
+                        <td className="p-4 border border-border-hairline text-burgundy font-bold">KRİTİK</td>
+                      </tr>
+                      <tr>
+                        <td className="p-4 border border-border-hairline font-bold">Uyumluluk</td>
+                        <td className="p-4 border border-border-hairline text-ink/60">Kapsam Dışı</td>
+                        <td className="p-4 border border-border-hairline">GDPR, SOC2, KVKK</td>
+                        <td className="p-4 border border-border-hairline text-status-warning font-bold">YÜKSEK</td>
+                      </tr>
+                      <tr>
+                        <td className="p-4 border border-border-hairline font-bold">Entegrasyon</td>
+                        <td className="p-4 border border-border-hairline text-ink/60">Gemini API Only</td>
+                        <td className="p-4 border border-border-hairline">Webhooks, Public API</td>
+                        <td className="p-4 border border-border-hairline text-ink/40 font-bold">ORTA</td>
+                      </tr>
+                    </tbody>
+                  </table>
+                </div>
               </div>
             </div>
-            <div className="col-span-12 lg:col-span-4 bg-ink text-white p-8 space-y-6">
-              <h3 className="font-serif text-2xl font-bold">Retention Insights</h3>
-              <div className="space-y-6">
-                <div className="space-y-2">
-                  <p className="text-[10px] font-black uppercase text-white/40">Top Performing Cohort</p>
-                  <p className="text-xl font-bold">{cohorts[0].month}</p>
-                  <p className="text-xs text-white/60">Maintaining {cohorts[0].retention[cohorts[0].retention.length-1]}% retention after 5 months.</p>
+
+            <div className="col-span-12 lg:col-span-4 space-y-6">
+              <div className="bg-ink text-white p-8 space-y-6">
+                <h3 className="font-serif text-2xl font-bold">Yol Haritası (Q2-Q4)</h3>
+                <div className="space-y-6">
+                  <div className="relative pl-6 border-l border-white/20">
+                    <div className="absolute left-[-5px] top-0 w-2 h-2 rounded-full bg-burgundy" />
+                    <p className="text-[10px] font-black uppercase text-white/40">Faz 1: Güvenlik</p>
+                    <p className="text-sm font-bold">Auth0/Okta Entegrasyonu ve RBAC yapısının kurulması.</p>
+                  </div>
+                  <div className="relative pl-6 border-l border-white/20">
+                    <div className="absolute left-[-5px] top-0 w-2 h-2 rounded-full bg-white/20" />
+                    <p className="text-[10px] font-black uppercase text-white/40">Faz 2: Veri Katmanı</p>
+                    <p className="text-sm font-bold">PostgreSQL geçişi ve veri şifreleme (At-rest/In-transit).</p>
+                  </div>
+                  <div className="relative pl-6 border-l border-white/20">
+                    <div className="absolute left-[-5px] top-0 w-2 h-2 rounded-full bg-white/20" />
+                    <p className="text-[10px] font-black uppercase text-white/40">Faz 3: Ölçeklenme</p>
+                    <p className="text-sm font-bold">Multi-tenancy mimarisi ve White-labeling desteği.</p>
+                  </div>
                 </div>
-                <div className="space-y-2">
-                  <p className="text-[10px] font-black uppercase text-white/40">Average Decay Rate</p>
-                  <p className="text-xl font-bold">-4.2% / Month</p>
-                  <p className="text-xs text-white/60">Your decay rate is 2% lower than the industry average for editorial newsletters.</p>
+              </div>
+
+              <div className="bg-burgundy text-white p-8">
+                <div className="flex items-center gap-3 mb-4">
+                  <Shield className="w-6 h-6" />
+                  <h4 className="font-bold uppercase tracking-tighter">AI Compliance Note</h4>
                 </div>
-                <div className="pt-6 border-t border-white/10">
-                  <p className="text-xs font-editorial italic text-white/80 leading-relaxed">
-                    "The {cohorts[0].month} cohort shows exceptional resilience. This aligns with the 'Summer Solstice' campaign launch, suggesting high-intent subscriber acquisition during that period."
-                  </p>
-                </div>
+                <p className="text-xs font-editorial italic leading-relaxed opacity-90">
+                  "Enterprise müşteriler için Gemini API kullanımında 'Data Opt-out' politikası uygulanmalı ve modellerin müşteri verisiyle eğitilmediği garanti edilmelidir."
+                </p>
               </div>
             </div>
           </div>
@@ -3881,16 +4181,11 @@ const Automations = () => {
 // --- Main App Layout ---
 
 export default function App() {
-  const [user, setUser] = useState<User | null>(null);
   const location = useLocation();
-
-  useEffect(() => {
-    api.getMe().then(setUser);
-  }, []);
 
   return (
     <div className="min-h-screen bg-bg selection:bg-burgundy selection:text-white">
-      <Masthead user={user} />
+      <Masthead />
       
       <main className="max-w-[1600px] mx-auto px-10 py-16">
         <AnimatePresence mode="wait">
@@ -3903,17 +4198,17 @@ export default function App() {
           >
             <Routes>
               <Route path="/" element={<Home />} />
-              <Route path="/campaigns" element={<Campaigns />} />
-              <Route path="/campaigns/:id" element={<CampaignDetail />} />
-              <Route path="/audiences" element={<Audiences />} />
-              <Route path="/automations" element={<Automations />} />
-              <Route path="/commerce" element={<Commerce />} />
-              <Route path="/collaboration" element={<Collaboration />} />
-              <Route path="/integrations" element={<Integrations />} />
-              <Route path="/templates" element={<Templates />} />
-              <Route path="/reports" element={<Reports />} />
-              <Route path="/infrastructure" element={<Infrastructure />} />
-              <Route path="/data-layer" element={<DataLayer />} />
+              <Route path="/campaigns" element={<ProtectedRoute><Campaigns /></ProtectedRoute>} />
+              <Route path="/campaigns/:id" element={<ProtectedRoute><CampaignDetail /></ProtectedRoute>} />
+              <Route path="/audiences" element={<ProtectedRoute permission="contact:edit"><Audiences /></ProtectedRoute>} />
+              <Route path="/automations" element={<ProtectedRoute permission="automation:edit"><Automations /></ProtectedRoute>} />
+              <Route path="/commerce" element={<ProtectedRoute><Commerce /></ProtectedRoute>} />
+              <Route path="/collaboration" element={<ProtectedRoute permission="team:manage"><Collaboration /></ProtectedRoute>} />
+              <Route path="/integrations" element={<ProtectedRoute permission="integration:manage"><Integrations /></ProtectedRoute>} />
+              <Route path="/templates" element={<ProtectedRoute><Templates /></ProtectedRoute>} />
+              <Route path="/reports" element={<ProtectedRoute permission="report:view"><Reports /></ProtectedRoute>} />
+              <Route path="/infrastructure" element={<ProtectedRoute permission="infrastructure:manage"><Infrastructure /></ProtectedRoute>} />
+              <Route path="/data-layer" element={<ProtectedRoute permission="infrastructure:manage"><DataLayer /></ProtectedRoute>} />
               <Route path="*" element={<Navigate to="/" />} />
             </Routes>
           </motion.div>
