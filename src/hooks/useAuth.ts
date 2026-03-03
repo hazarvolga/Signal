@@ -65,5 +65,10 @@ export function useAuth() {
 
   const isAdmin = user?.role === 'OWNER' || user?.role === 'ADMIN';
 
-  return { user, loading, hasPermission, isAdmin };
+  const refreshUser = useCallback(async () => {
+    const updatedUser = await api.getMe();
+    setUser(updatedUser);
+  }, []);
+
+  return { user, loading, hasPermission, isAdmin, refreshUser };
 }

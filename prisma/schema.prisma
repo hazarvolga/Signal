@@ -6,8 +6,8 @@ generator client {
 }
 
 datasource db {
-  provider = "sqlite"
-  url      = "file:./signal.db"
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
 }
 
 model Organization {
@@ -41,6 +41,13 @@ model Organization {
   roles       Role[]
   consentLogs ConsentLog[]
   dataRequests DataRequest[]
+
+  // SSO Config
+  ssoEnabled      Boolean  @default(false)
+  ssoDomain       String?
+  ssoClientId     String?
+  ssoClientSecret String?
+  ssoIssuer       String?
 }
 
 model WorkflowTemplate {
@@ -133,6 +140,15 @@ model User {
   customRole     Role?        @relation(fields: [roleId], references: [id])
   organizationId String
   organization   Organization @relation(fields: [organizationId], references: [id])
+  
+  // SSO & MFA
+  ssoId          String?      @unique
+  ssoProvider    String?
+  mfaEnabled     Boolean      @default(false)
+  lastLoginAt    DateTime?
+  lastLoginIp    String?
+  lastLoginUserAgent String?
+  
   createdAt      DateTime     @default(now())
   updatedAt      DateTime     @updatedAt
 }

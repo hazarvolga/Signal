@@ -395,6 +395,28 @@ export const api = {
     const res = await fetch('/api/compliance/data-requests');
     return res.json();
   },
+  async getAuditLogs(): Promise<any[]> {
+    const res = await fetch('/api/compliance/audit-logs');
+    return res.json();
+  },
+  async getApiKeys(): Promise<any[]> {
+    const res = await fetch('/api/keys');
+    return res.json();
+  },
+  async createApiKey(data: { name: string, scopes?: string[] }): Promise<any> {
+    const res = await fetch('/api/keys', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(data),
+    });
+    return res.json();
+  },
+  async deleteApiKey(id: string): Promise<{ success: boolean }> {
+    const res = await fetch(`/api/keys/${id}`, {
+      method: 'DELETE',
+    });
+    return res.json();
+  },
   async addDataRequest(data: any): Promise<any> {
     const res = await fetch('/api/compliance/data-requests', {
       method: 'POST',
@@ -408,6 +430,21 @@ export const api = {
       method: 'PATCH',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ status }),
+    });
+    return res.json();
+  },
+
+  // SSO & MFA
+  async getSSOUrl(): Promise<{ url: string, isMock: boolean }> {
+    const res = await fetch('/api/auth/sso/url');
+    return res.json();
+  },
+
+  async updateMFA(enabled: boolean): Promise<any> {
+    const res = await fetch('/api/me/mfa', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ enabled }),
     });
     return res.json();
   },

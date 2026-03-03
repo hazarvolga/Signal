@@ -6,6 +6,12 @@ export interface Organization {
   address?: string;
   timezone: string;
   createdAt: string;
+  
+  // SSO Config
+  ssoEnabled: boolean;
+  ssoDomain?: string;
+  ssoClientId?: string;
+  ssoIssuer?: string;
 }
 
 export interface User {
@@ -18,6 +24,12 @@ export interface User {
   customRole?: Role;
   organizationId: string;
   organization?: Organization;
+  
+  // SSO & MFA
+  ssoId?: string;
+  ssoProvider?: string;
+  mfaEnabled: boolean;
+  lastLoginAt?: string;
 }
 
 export interface Role {

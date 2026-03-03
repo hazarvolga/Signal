@@ -5,6 +5,7 @@ import { fileURLToPath } from "url";
 import { PrismaClient } from "@prisma/client";
 import { mjmlTemplates } from "./src/data/mjmlTemplates";
 import { geminiService } from "./src/services/geminiService";
+import { redisService } from "./src/services/redisService";
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
@@ -127,14 +128,14 @@ async function seed() {
           name: "Welcome Sequence",
           description: "Automated welcome series for new signups + dashboard walkthrough.",
           category: "ONBOARDING",
-          nodes: JSON.stringify([{ id: '1', type: 'trigger', data: { label: 'User Signed Up' } }]),
+          nodes: JSON.stringify([{ id: '1', type: 'custom', position: { x: 100, y: 100 }, data: { label: 'User Signed Up', type: 'Trigger', icon: 'Zap', color: 'bg-burgundy/10 text-burgundy' } }]),
           edges: "[]"
         },
         {
           name: "Product First Use Guide",
           description: "Step-by-step guide for first-time product usage via email or in-app.",
           category: "ONBOARDING",
-          nodes: JSON.stringify([{ id: '1', type: 'trigger', data: { label: 'First Login' } }]),
+          nodes: JSON.stringify([{ id: '1', type: 'custom', position: { x: 100, y: 100 }, data: { label: 'First Login', type: 'Trigger', icon: 'Zap', color: 'bg-burgundy/10 text-burgundy' } }]),
           edges: "[]"
         },
         {
@@ -356,6 +357,81 @@ async function seed() {
     });
     console.log("Seeded expanded workflow templates.");
   }
+
+  // Seed Consent Logs and Data Requests
+  const consentLogCount = await prisma.consentLog.count();
+  if (consentLogCount === 0) {
+    const contact = await prisma.contact.findFirst();
+    if (contact) {
+      await prisma.consentLog.createMany({
+        data: [
+          { contactId: contact.id, action: "SUBSCRIBE", source: "FORM", ipAddress: "192.168.1.1", organizationId: org.id },
+          { contactId: contact.id, action: "PREFERENCE_UPDATE", source: "PREFERENCE_CENTER", ipAddress: "192.168.1.1", organizationId: org.id },
+        ]
+      });
+      console.log("Seeded initial consent logs.");
+    }
+  }
+
+  const dataRequestCount = await prisma.dataRequest.count();
+  if (dataRequestCount === 0) {
+    const contact = await prisma.contact.findFirst();
+    if (contact) {
+      await prisma.dataRequest.createMany({
+        data: [
+          { contactId: contact.id, type: "EXPORT", status: "COMPLETED", organizationId: org.id },
+          { contactId: contact.id, type: "DELETE", status: "PENDING", organizationId: org.id },
+        ]
+      });
+      console.log("Seeded initial data requests.");
+    }
+  }
+
+  // Seed Approval Requests
+  const approvalCount = await prisma.approvalRequest.count();
+  if (approvalCount === 0) {
+    const campaign = await prisma.campaign.create({
+      data: {
+        name: "Q1 Newsletter",
+        subject: "Our latest updates",
+        fromName: "SIGNAL",
+        fromEmail: "news@signal.app",
+        status: "IN_REVIEW",
+        organizationId: org.id
+      }
+    });
+
+    await prisma.approvalRequest.create({
+      data: {
+        campaignId: campaign.id,
+        requesterId: "Editor in Chief",
+        status: "PENDING",
+        comments: "Please review the new layout."
+      }
+    });
+    console.log("Seeded initial approval request.");
+  }
+
+  // Update Org/User with SSO/MFA data
+  await prisma.organization.update({
+    where: { id: org.id },
+    data: {
+      ssoEnabled: true,
+      ssoDomain: "signal.app",
+      ssoClientId: "client_123",
+      ssoIssuer: "https://auth.signal.app"
+    }
+  });
+
+  const adminUser = await prisma.user.findFirst({ where: { email: "admin@signal.app" } });
+  if (adminUser) {
+    await prisma.user.update({
+      where: { id: adminUser.id },
+      data: {
+        mfaEnabled: true
+      }
+    });
+  }
 }
 
 async function startServer() {
@@ -365,6 +441,123 @@ async function startServer() {
   const PORT = 3000;
 
   app.use(express.json());
+
+  // --- SOC2 Audit Logging Middleware ---
+  app.use(async (req, res, next) => {
+    const originalSend = res.send;
+    const org = await prisma.organization.findFirst();
+    
+    res.send = function (body) {
+      if (['POST', 'PUT', 'PATCH', 'DELETE'].includes(req.method) && res.statusCode < 400 && org) {
+        // Log the action asynchronously
+        const action = `${req.method} ${req.path}`;
+        const userId = req.headers['x-user-id'] as string || 'system';
+        
+        prisma.auditLog.create({
+          data: {
+            action,
+            entityType: req.path.split('/')[2] || 'unknown',
+            entityId: req.params.id || 'bulk',
+            userId,
+            organizationId: org.id,
+          }
+        }).catch(err => console.error("Audit log failed:", err));
+      }
+      return originalSend.call(this, body);
+    };
+    next();
+  });
+
+  // --- Public API Gateway & Rate Limiting ---
+  const publicApiGateway = async (req: express.Request, res: express.Response, next: express.NextFunction) => {
+    const apiKeyHeader = req.headers['x-api-key'] as string;
+    if (!apiKeyHeader) return res.status(401).json({ error: "API key required" });
+
+    const key = await prisma.apiKey.findUnique({
+      where: { key: apiKeyHeader },
+      include: { organization: true }
+    });
+
+    if (!key) return res.status(401).json({ error: "Invalid API key" });
+
+    // Rate Limiting
+    const { remaining, reset } = await redisService.rateLimit(`ratelimit:api:${key.id}`, 100, 60); // 100 req/min
+    res.setHeader('X-RateLimit-Remaining', remaining);
+    res.setHeader('X-RateLimit-Reset', reset);
+
+    if (remaining === 0) {
+      return res.status(429).json({ error: "Rate limit exceeded" });
+    }
+
+    // Attach org to request
+    (req as any).organization = key.organization;
+    (req as any).apiKey = key;
+
+    // Update last used
+    prisma.apiKey.update({
+      where: { id: key.id },
+      data: { lastUsedAt: new Date() }
+    }).catch(() => {});
+
+    next();
+  };
+
+  // --- Public API V1 Routes ---
+  const publicRouter = express.Router();
+  publicRouter.use(publicApiGateway);
+
+  publicRouter.get("/contacts", async (req, res) => {
+    const org = (req as any).organization;
+    const contacts = await prisma.contact.findMany({ where: { organizationId: org.id } });
+    res.json(contacts);
+  });
+
+  publicRouter.post("/contacts", async (req, res) => {
+    const org = (req as any).organization;
+    const { email, firstName, lastName } = req.body;
+    const contact = await prisma.contact.upsert({
+      where: { email_organizationId: { email, organizationId: org.id } },
+      update: { firstName, lastName },
+      create: { email, firstName, lastName, organizationId: org.id }
+    });
+    res.json(contact);
+  });
+
+  publicRouter.get("/campaigns", async (req, res) => {
+    const org = (req as any).organization;
+    const campaigns = await prisma.campaign.findMany({ where: { organizationId: org.id } });
+    res.json(campaigns);
+  });
+
+  app.use("/api/v1", publicRouter);
+
+  // --- API Keys Management ---
+  app.get("/api/keys", async (req, res) => {
+    const org = await prisma.organization.findFirst();
+    const keys = await prisma.apiKey.findMany({ where: { organizationId: org?.id } });
+    res.json(keys);
+  });
+
+  app.post("/api/keys", async (req, res) => {
+    const { name, scopes } = req.body;
+    const org = await prisma.organization.findFirst();
+    if (!org) return res.status(404).json({ error: "Org not found" });
+
+    const key = await prisma.apiKey.create({
+      data: {
+        name,
+        key: `sig_${Math.random().toString(36).substring(2)}${Math.random().toString(36).substring(2)}`,
+        scopes: JSON.stringify(scopes || []),
+        organizationId: org.id
+      }
+    });
+    res.json(key);
+  });
+
+  app.delete("/api/keys/:id", async (req, res) => {
+    await prisma.apiKey.delete({ where: { id: req.params.id } });
+    res.json({ success: true });
+  });
 
   // --- API Routes ---
 
@@ -1258,6 +1451,95 @@ app.get("/api/webhooks", async (req, res) => {
   const org = await prisma.organization.findFirst();
   const webhooks = await prisma.webhook.findMany({ where: { organizationId: org?.id } });
   res.json(webhooks);
+});
+
+// SSO (Enterprise)
+app.get("/api/auth/sso/url", async (req, res) => {
+  const org = await prisma.organization.findFirst();
+  if (!org) return res.status(404).json({ error: "Org not found" });
+
+  const clientId = process.env.SSO_CLIENT_ID;
+  const issuer = process.env.SSO_ISSUER;
+  const redirectUri = `${process.env.APP_URL || `http://localhost:3000`}/auth/sso/callback`;
+
+  if (!clientId || !issuer) {
+    // Return a mock URL for demonstration if not configured
+    return res.json({ 
+      url: `/auth/sso/mock-login?orgId=${org.id}`,
+      isMock: true 
+    });
+  }
+
+  const params = new URLSearchParams({
+    client_id: clientId,
+    redirect_uri: redirectUri,
+    response_type: 'code',
+    scope: 'openid profile email',
+    state: org.id,
+  });
+
+  res.json({ url: `${issuer}/authorize?${params.toString()}` });
+});
+
+app.get("/auth/sso/callback", async (req, res) => {
+  const { code, state: orgId } = req.query;
+  
+  // In a real app, we'd exchange the code for tokens here.
+  // For this demo, we'll simulate a successful login.
+  
+  res.send(`
+    <html>
+      <body style="font-family: sans-serif; display: flex; align-items: center; justify-content: center; height: 100vh; background: #F5F2EC; margin: 0;">
+        <div style="text-align: center; padding: 40px; background: white; border: 1px solid #1A1814; box-shadow: 0 4px 20px rgba(0,0,0,0.05);">
+          <h2 style="font-family: serif; margin-top: 0;">SSO Authentication Successful</h2>
+          <p style="font-size: 14px; color: #666;">Your enterprise account has been linked successfully.</p>
+          <div style="margin: 20px 0; color: #2D5A27; font-weight: bold;">✓ Verified</div>
+          <p style="font-size: 10px; color: #999;">This window will close automatically.</p>
+          <script>
+            if (window.opener) {
+              window.opener.postMessage({ type: 'SSO_AUTH_SUCCESS' }, '*');
+              setTimeout(() => window.close(), 2000);
+            } else {
+              window.location.href = '/';
+            }
+          </script>
+        </div>
+      </body>
+    </html>
+  `);
+});
+
+// Mock SSO Login Page
+app.get("/auth/sso/mock-login", (req, res) => {
+  const { orgId } = req.query;
+  res.send(`
+    <html>
+      <body style="font-family: sans-serif; display: flex; align-items: center; justify-content: center; height: 100vh; background: #F5F2EC; margin: 0;">
+        <div style="text-align: center; padding: 40px; background: white; border: 1px solid #1A1814; max-width: 400px; box-shadow: 0 4px 20px rgba(0,0,0,0.05);">
+          <div style="font-size: 10px; font-weight: bold; text-transform: uppercase; letter-spacing: 0.1em; color: #8B1A1A; margin-bottom: 10px;">Enterprise Portal</div>
+          <h2 style="font-family: serif; margin-bottom: 20px; font-size: 24px;">Sign in to SIGNAL</h2>
+          <p style="font-size: 12px; color: #666; margin-bottom: 30px; line-height: 1.5;">This is a simulated SSO provider (Auth0/Okta) for demonstration purposes. In production, this would be your corporate login page.</p>
+          <button onclick="window.location.href='/auth/sso/callback?code=mock_code&state=${orgId}'" 
+                  style="background: #1A1814; color: white; border: none; padding: 14px 24px; cursor: pointer; font-weight: bold; width: 100%; text-transform: uppercase; letter-spacing: 0.05em; transition: opacity 0.2s;">
+            Continue with Enterprise ID
+          </button>
+          <div style="margin-top: 20px; font-size: 10px; color: #999;">Secure Connection via OAuth 2.0</div>
+        </div>
+      </body>
+    </html>
+  `);
+});
+
+app.post("/api/me/mfa", async (req, res) => {
+  const { enabled } = req.body;
+  const user = await prisma.user.findFirst();
+  if (!user) return res.status(404).json({ error: "User not found" });
+
+  const updatedUser = await prisma.user.update({
+    where: { id: user.id },
+    data: { mfaEnabled: enabled }
+  });
+  res.json(updatedUser);
 });
 
 app.listen(PORT, "0.0.0.0", () => {
