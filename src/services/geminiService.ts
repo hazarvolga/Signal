@@ -115,4 +115,32 @@ export const geminiService = {
       return { hour: 9, reason: "Error predicting time" };
     }
   },
+
+  async generateFullContent(brief: string, tone: string): Promise<{ subject: string, content: string }> {
+    const response = await ai.models.generateContent({
+      model: "gemini-3-flash-preview",
+      contents: `Generate a complete professional email campaign based on this brief: "${brief}".
+      The tone should be "${tone}".
+      The output should be a JSON object with "subject" (string) and "content" (HTML string).
+      Use clean, semantic HTML for the content, suitable for an email newsletter.
+      The style should be sophisticated, editorial, and authoritative.
+      Include a headline, body paragraphs, and a clear call to action.`,
+      config: {
+        responseMimeType: "application/json",
+        responseSchema: {
+          type: Type.OBJECT,
+          properties: {
+            subject: { type: Type.STRING },
+            content: { type: Type.STRING },
+          },
+          required: ["subject", "content"],
+        },
+      },
+    });
+    try {
+      return JSON.parse(response.text || '{"subject": "", "content": ""}');
+    } catch (e) {
+      return { subject: "", content: "" };
+    }
+  },
 };

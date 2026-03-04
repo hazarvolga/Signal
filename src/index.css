@@ -9,22 +9,48 @@
   --font-body: "Source Serif 4", serif;
   --font-mono: "Courier Prime", monospace;
 
-  --color-bg: #F5F2EC;
-  --color-ink: #1A1814;
-  --color-burgundy: #8B1A1A;
-  --color-brass: #C9A84C;
-  --color-surface: #EDE9E1;
-  --color-border-hairline: #D4CFC6;
+  --color-bg: var(--bg);
+  --color-ink: var(--ink);
+  --color-burgundy: var(--burgundy);
+  --color-brass: var(--brass);
+  --color-surface: var(--surface);
+  --color-border-hairline: var(--border-hairline);
   
-  --color-status-success: #2D5A27;
-  --color-status-scheduled: #3A4A6B;
-  --color-status-warning: #9B4A1A;
-  --color-status-draft: #4A4A4A;
+  --color-status-success: var(--status-success);
+  --color-status-scheduled: var(--status-scheduled);
+  --color-status-warning: var(--status-warning);
+  --color-status-draft: var(--status-draft);
 }
 
 @layer base {
+  :root {
+    --bg: #F5F2EC;
+    --ink: #1A1814;
+    --burgundy: #8B1A1A;
+    --brass: #C9A84C;
+    --surface: #EDE9E1;
+    --border-hairline: #D4CFC6;
+    --status-success: #2D5A27;
+    --status-scheduled: #3A4A6B;
+    --status-warning: #9B4A1A;
+    --status-draft: #4A4A4A;
+  }
+
+  .dark {
+    --bg: #12110F;
+    --ink: #E6E2D9;
+    --burgundy: #D64545;
+    --brass: #E6C35C;
+    --surface: #1E1C18;
+    --border-hairline: #2D2B26;
+    --status-success: #4CAF50;
+    --status-scheduled: #64B5F6;
+    --status-warning: #FF9800;
+    --status-draft: #9E9E9E;
+  }
+
   body {
-    @apply bg-bg text-ink font-body selection:bg-burgundy selection:text-white;
+    @apply bg-bg text-ink font-body selection:bg-burgundy selection:text-white transition-colors duration-300;
     position: relative;
   }
 
@@ -81,7 +107,7 @@
   }
 
   .metric-value {
-    @apply font-editorial text-7xl leading-none;
+    @apply font-editorial text-4xl sm:text-7xl leading-none;
   }
 
   .metric-label {

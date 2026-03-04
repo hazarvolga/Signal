@@ -1,5 +1,5 @@
 import React, { useState, useEffect, useCallback, useRef } from 'react';
-import { BrowserRouter, Routes, Route, Link, useLocation, useParams, Navigate, useSearchParams } from 'react-router-dom';
+import { BrowserRouter, Routes, Route, Link, useLocation, useParams, Navigate, useSearchParams, useNavigate } from 'react-router-dom';
 import { 
   LayoutDashboard, 
   Users, 
@@ -44,7 +44,11 @@ import {
   RefreshCw,
   Image as ImageIcon,
   Download,
-  Loader2
+  Loader2,
+  Sun,
+  Moon,
+  Menu,
+  X
 } from 'lucide-react';
 import { motion, AnimatePresence } from 'motion/react';
 import { GoogleGenAI } from "@google/genai";
@@ -122,48 +126,78 @@ const ProtectedRoute = ({
 
 // --- Components ---
 
-const Masthead = ({ onOpenGuide }: { onOpenGuide: () => void }) => {
+const Masthead = ({ onOpenGuide, theme, toggleTheme }: { onOpenGuide: () => void, theme: 'light' | 'dark', toggleTheme: () => void }) => {
   const { user } = useAuth();
   const location = useLocation();
+  const [isMobileMenuOpen, setIsMobileMenuOpen] = useState(false);
+
+  const navLinks = [
+    { to: "/campaigns", label: "Campaigns" },
+    { to: "/audiences", label: "Audiences" },
+    { to: "/automations", label: "Automations" },
+    { to: "/commerce", label: "Commerce" },
+    { to: "/validation", label: "Validation" },
+    { to: "/collaboration", label: "Collaboration" },
+    { to: "/integrations", label: "Integrations" },
+    { to: "/reports", label: "Reports" },
+    { to: "/templates", label: "Templates" },
+    { to: "/visual-studio", label: "Visual Studio" },
+    { to: "/infrastructure", label: "Infrastructure" },
+  ];
   
   return (
     <header className="bg-surface border-b-2 border-burgundy sticky top-0 z-50">
-      <div className="max-w-[1600px] mx-auto px-10 h-20 flex items-center justify-between">
-        <div className="flex items-center gap-12">
-          <Link to="/" className="text-4xl font-serif font-black tracking-tighter text-ink">
+      <div className="max-w-[1600px] mx-auto px-4 sm:px-6 lg:px-10 h-20 flex items-center justify-between">
+        <div className="flex items-center gap-4 lg:gap-12">
+          {/* Mobile Menu Toggle */}
+          <button 
+            onClick={() => setIsMobileMenuOpen(!isMobileMenuOpen)}
+            className="2xl:hidden p-2 text-ink/60 hover:text-burgundy transition-colors"
+            aria-label="Toggle Menu"
+          >
+            {isMobileMenuOpen ? <X size={24} /> : <Menu size={24} />}
+          </button>
+
+          <Link to="/" className="text-2xl sm:text-3xl lg:text-4xl font-serif font-black tracking-tighter text-ink shrink-0">
             SIGNAL<span className="text-burgundy">.</span>
           </Link>
           
-          <nav className="hidden lg:flex items-center gap-8">
-            <Link to="/campaigns" className={cn("masthead-link", location.pathname.startsWith('/campaigns') && "active")}>Campaigns</Link>
-            <Link to="/audiences" className={cn("masthead-link", location.pathname.startsWith('/audiences') && "active")}>Audiences</Link>
-            <Link to="/automations" className={cn("masthead-link", location.pathname.startsWith('/automations') && "active")}>Automations</Link>
-            <Link to="/commerce" className={cn("masthead-link", location.pathname.startsWith('/commerce') && "active")}>Commerce</Link>
-            <Link to="/validation" className={cn("masthead-link", location.pathname.startsWith('/validation') && "active")}>Validation</Link>
-            <Link to="/collaboration" className={cn("masthead-link", location.pathname.startsWith('/collaboration') && "active")}>Collaboration</Link>
-            <Link to="/integrations" className={cn("masthead-link", location.pathname.startsWith('/integrations') && "active")}>Integrations</Link>
-            <Link to="/reports" className={cn("masthead-link", location.pathname.startsWith('/reports') && "active")}>Reports</Link>
-            <Link to="/templates" className={cn("masthead-link", location.pathname.startsWith('/templates') && "active")}>Templates</Link>
-            <Link to="/visual-studio" className={cn("masthead-link", location.pathname.startsWith('/visual-studio') && "active")}>Visual Studio</Link>
-            <Link to="/infrastructure" className={cn("masthead-link", location.pathname.startsWith('/infrastructure') && "active")}>Infrastructure</Link>
+          <nav className="hidden 2xl:flex items-center gap-4">
+            {navLinks.map(link => (
+              <Link 
+                key={link.to}
+                to={link.to} 
+                className={cn("masthead-link whitespace-nowrap", location.pathname.startsWith(link.to) && "active")}
+              >
+                {link.label}
+              </Link>
+            ))}
           </nav>
         </div>
 
-        <div className="flex items-center gap-6">
+        <div className="flex items-center gap-2 sm:gap-6">
+          <button 
+            onClick={toggleTheme}
+            className="p-2 text-ink/60 hover:text-burgundy transition-colors rounded-full hover:bg-burgundy/5"
+            title={theme === 'light' ? 'Switch to Dark Mode' : 'Switch to Light Mode'}
+          >
+            {theme === 'light' ? <Moon size={20} /> : <Sun size={20} />}
+          </button>
+
           <button 
             onClick={onOpenGuide}
-            className="flex items-center gap-2 text-[10px] font-black uppercase tracking-widest text-burgundy hover:bg-burgundy/5 px-3 py-2 rounded transition-all border border-burgundy/20"
+            className="hidden sm:flex items-center gap-2 text-[10px] font-black uppercase tracking-widest text-burgundy hover:bg-burgundy/5 px-3 py-2 rounded transition-all border border-burgundy/20"
           >
             <BookOpen size={14} />
             <span>Guide</span>
           </button>
           
-          <div className="hidden md:flex items-center gap-2 px-3 py-1.5 bg-surface border border-border-hairline rounded text-[10px] font-mono text-ink/40">
+          <div className="hidden 2xl:flex items-center gap-2 px-3 py-1.5 bg-surface border border-border-hairline rounded text-[10px] font-mono text-ink/40">
             <Search size={12} />
             <span>CMD + K TO SEARCH</span>
           </div>
           
-          <div className="flex items-center gap-4 border-l border-border-hairline pl-6">
+          <div className="flex items-center gap-2 sm:gap-4 border-l border-border-hairline pl-4 sm:pl-6">
             <button className="text-ink/60 hover:text-burgundy transition-colors">
               <Bell size={20} />
             </button>
@@ -184,20 +218,58 @@ const Masthead = ({ onOpenGuide }: { onOpenGuide: () => void }) => {
           </div>
         </div>
       </div>
+
+      {/* Mobile Menu Overlay */}
+      <AnimatePresence>
+        {isMobileMenuOpen && (
+          <motion.div
+            initial={{ opacity: 0, y: -20 }}
+            animate={{ opacity: 1, y: 0 }}
+            exit={{ opacity: 0, y: -20 }}
+            className="2xl:hidden absolute top-20 left-0 w-full bg-surface border-b-2 border-burgundy shadow-2xl z-40 overflow-y-auto max-h-[calc(100vh-80px)]"
+          >
+            <nav className="flex flex-col p-6 gap-2">
+              {navLinks.map(link => (
+                <Link 
+                  key={link.to}
+                  to={link.to} 
+                  onClick={() => setIsMobileMenuOpen(false)}
+                  className={cn(
+                    "text-lg font-serif font-bold p-4 border border-border-hairline hover:bg-burgundy/5 transition-colors flex justify-between items-center",
+                    location.pathname.startsWith(link.to) ? "text-burgundy bg-burgundy/5 border-burgundy/20" : "text-ink/60"
+                  )}
+                >
+                  {link.label}
+                  <ChevronRight size={16} className={cn(location.pathname.startsWith(link.to) ? "opacity-100" : "opacity-20")} />
+                </Link>
+              ))}
+              <div className="mt-4 p-4 border-t border-border-hairline flex flex-col gap-4">
+                <button 
+                  onClick={() => { onOpenGuide(); setIsMobileMenuOpen(false); }}
+                  className="flex items-center gap-3 text-xs font-black uppercase tracking-widest text-burgundy"
+                >
+                  <BookOpen size={16} />
+                  <span>Open Documentation Guide</span>
+                </button>
+              </div>
+            </nav>
+          </motion.div>
+        )}
+      </AnimatePresence>
     </header>
   );
 };
 
 const SectionHeader = ({ title, subtitle, action, guideKey }: { title: string, subtitle?: string, action?: React.ReactNode, guideKey?: string }) => (
-  <div className="flex justify-between items-end border-b border-border-hairline pb-4 mb-8">
+  <div className="flex flex-col sm:flex-row sm:justify-between sm:items-end border-b border-border-hairline pb-4 mb-8 gap-4">
     <div>
       <div className="flex items-center gap-3 mb-2">
-        <h1 className="text-5xl font-serif font-bold text-ink">{title}</h1>
+        <h1 className="text-3xl sm:text-5xl font-serif font-bold text-ink leading-tight">{title}</h1>
         {guideKey && <HelpTooltip guideKey={guideKey} />}
       </div>
-      {subtitle && <p className="text-lg font-editorial italic text-ink/60">{subtitle}</p>}
+      {subtitle && <p className="text-base sm:text-lg font-editorial italic text-ink/60">{subtitle}</p>}
     </div>
-    {action}
+    {action && <div className="flex shrink-0">{action}</div>}
   </div>
 );
 
@@ -1192,6 +1264,25 @@ const Campaigns = () => {
   const [selectedAbCampaign, setSelectedAbCampaign] = useState<Campaign | null>(null);
   const [personalizedContent, setPersonalizedContent] = useState<string>('');
   const [contacts, setContacts] = useState<Contact[]>([]);
+  const [isAiAssistantOpen, setIsAiAssistantOpen] = useState(false);
+  const [aiBrief, setAiBrief] = useState('');
+  const [aiTone, setAiTone] = useState('Professional');
+  const [isAiGenerating, setIsAiGenerating] = useState(false);
+
+  const handleAiGenerate = async () => {
+    if (!aiBrief) return;
+    setIsAiGenerating(true);
+    try {
+      const { subject, content } = await api.generateFullContent(aiBrief, aiTone);
+      setNewCampaign({ ...newCampaign, subject, content });
+      setIsAiAssistantOpen(false);
+      setAiBrief('');
+    } catch (error) {
+      console.error("AI Generation failed", error);
+    } finally {
+      setIsAiGenerating(false);
+    }
+  };
 
   useEffect(() => {
     api.getCampaigns().then(setCampaigns);
@@ -1377,6 +1468,13 @@ const Campaigns = () => {
                       <option key={t.id} value={t.id}>{t.name}</option>
                     ))}
                   </select>
+                  <button 
+                    type="button"
+                    onClick={() => setIsAiAssistantOpen(true)}
+                    className="text-[10px] font-black uppercase tracking-widest text-burgundy bg-transparent border-none outline-none cursor-pointer hover:underline flex items-center gap-1"
+                  >
+                    <Sparkles size={12} /> Write with AI
+                  </button>
                 </div>
               </div>
               <button onClick={() => setIsCreating(false)} className="text-ink/40 hover:text-burgundy">✕</button>
@@ -2053,6 +2151,79 @@ const Campaigns = () => {
                   <p className="text-[10px] font-mono uppercase tracking-widest">
                     AI Recommendation: <span className="text-burgundy font-black">Variation B</span> is performing 15% better in open rates.
                   </p>
+                </div>
+              </div>
+            </motion.div>
+          </div>
+        )}
+
+        {isAiAssistantOpen && (
+          <div className="fixed inset-0 z-[100] flex items-center justify-center p-6 bg-ink/40 backdrop-blur-sm">
+            <motion.div 
+              initial={{ opacity: 0, scale: 0.95 }}
+              animate={{ opacity: 1, scale: 1 }}
+              exit={{ opacity: 0, scale: 0.95 }}
+              className="bg-bg border border-ink w-full max-w-lg p-10 shadow-2xl space-y-8"
+            >
+              <div className="flex justify-between items-start">
+                <div className="space-y-1">
+                  <div className="flex items-center gap-2 text-burgundy">
+                    <Sparkles size={18} />
+                    <span className="text-[10px] font-black uppercase tracking-widest">AI Copywriting Assistant</span>
+                  </div>
+                  <h2 className="font-serif text-3xl font-bold">Generate Dispatch</h2>
+                </div>
+                <button onClick={() => setIsAiAssistantOpen(false)} className="text-ink/40 hover:text-burgundy">✕</button>
+              </div>
+
+              <div className="space-y-6">
+                <div className="space-y-2">
+                  <label className="metric-label">Content Brief</label>
+                  <textarea 
+                    className="w-full bg-transparent border border-border-hairline p-4 font-serif text-lg outline-none focus:border-burgundy transition-colors min-h-[120px]"
+                    placeholder="What is this email about? (e.g. A weekly newsletter about sustainable fashion with 3 main articles...)"
+                    value={aiBrief}
+                    onChange={e => setAiBrief(e.target.value)}
+                  />
+                </div>
+
+                <div className="space-y-2">
+                  <label className="metric-label">Editorial Tone</label>
+                  <div className="grid grid-cols-3 gap-2">
+                    {['Professional', 'Casual', 'Urgent', 'Inspirational', 'Authoritative', 'Minimalist'].map(tone => (
+                      <button 
+                        key={tone}
+                        type="button"
+                        onClick={() => setAiTone(tone)}
+                        className={cn(
+                          "py-2 text-[10px] font-black uppercase tracking-widest border transition-all",
+                          aiTone === tone ? "bg-ink text-white border-ink" : "border-border-hairline text-ink/40 hover:border-burgundy hover:text-burgundy"
+                        )}
+                      >
+                        {tone}
+                      </button>
+                    ))}
+                  </div>
+                </div>
+
+                <div className="pt-4 flex gap-4">
+                  <button 
+                    onClick={handleAiGenerate} 
+                    disabled={isAiGenerating || !aiBrief}
+                    className="btn-primary flex-1 py-4 flex items-center justify-center gap-2 disabled:opacity-50"
+                  >
+                    {isAiGenerating ? (
+                      <>
+                        <div className="w-4 h-4 border-2 border-white/20 border-t-white rounded-full animate-spin" />
+                        Generating...
+                      </>
+                    ) : (
+                      <>
+                        <Wand2 size={16} />
+                        Generate Content
+                      </>
+                    )}
+                  </button>
                 </div>
               </div>
             </motion.div>
@@ -3708,10 +3879,14 @@ const DataLayer = () => {
   const [isAddingField, setIsAddingField] = useState(false);
   const [newSegment, setNewSegment] = useState({ name: '', rules: '' });
   const [newField, setNewField] = useState({ name: '', key: '', type: 'TEXT' as any });
+  const [contacts, setContacts] = useState<Contact[]>([]);
+  const [isAiSegmentActive, setIsAiSegmentActive] = useState(false);
+  const [aiSegmentData, setAiSegmentData] = useState<{ count: number, riskLevel: string } | null>(null);
 
   useEffect(() => {
     api.getSegments().then(setSegments);
     api.getCustomFields().then(setCustomFields);
+    api.getContacts().then(setContacts);
   }, []);
 
   const handleAddField = async (e: React.FormEvent) => {
@@ -3728,6 +3903,15 @@ const DataLayer = () => {
     api.getSegments().then(setSegments);
     setIsAddingSegment(false);
     setNewSegment({ name: '', rules: '' });
+  };
+
+  const activateAiSegment = () => {
+    const churnRisks = contacts.filter(c => (c.engagementScore || 0) < 50);
+    setAiSegmentData({
+      count: churnRisks.length,
+      riskLevel: churnRisks.length > 1 ? 'CRITICAL' : 'MODERATE'
+    });
+    setIsAiSegmentActive(true);
   };
 
   return (
@@ -3774,19 +3958,44 @@ const DataLayer = () => {
             )}
           </div>
 
-          {/* AI Predictive Segment Mockup */}
-          <div className="bg-ink text-white p-8 space-y-4">
+          {/* AI Predictive Segment */}
+          <div className={cn(
+            "p-8 space-y-4 transition-all duration-500",
+            isAiSegmentActive ? "bg-burgundy text-white" : "bg-ink text-white"
+          )}>
             <div className="flex items-center gap-2 text-burgundy">
-              <Sparkles size={16} />
-              <span className="text-[10px] font-black uppercase tracking-widest">AI Predictive Intelligence</span>
+              <Sparkles size={16} className={isAiSegmentActive ? "text-white animate-pulse" : "text-burgundy"} />
+              <span className={cn("text-[10px] font-black uppercase tracking-widest", isAiSegmentActive ? "text-white" : "text-burgundy")}>
+                AI Predictive Intelligence
+              </span>
             </div>
             <h4 className="font-serif text-2xl font-bold">Likely to Churn (Next 30 Days)</h4>
-            <p className="text-sm text-white/60 leading-relaxed">
-              Our AI model has identified 124 subscribers who show behavioral patterns consistent with high churn risk.
+            <p className={cn("text-sm leading-relaxed", isAiSegmentActive ? "text-white/80" : "text-white/60")}>
+              {isAiSegmentActive 
+                ? `Analysis complete. ${aiSegmentData?.count} subscribers identified as ${aiSegmentData?.riskLevel} churn risk based on behavioral decay.`
+                : "Our AI model identifies subscribers who show behavioral patterns consistent with high churn risk."
+              }
             </p>
-            <button className="text-[10px] font-black uppercase tracking-widest border border-white/20 px-4 py-2 hover:bg-white hover:text-ink transition-all">
-              Activate AI Segment
-            </button>
+            {!isAiSegmentActive ? (
+              <button 
+                onClick={activateAiSegment}
+                className="text-[10px] font-black uppercase tracking-widest border border-white/20 px-4 py-2 hover:bg-white hover:text-ink transition-all"
+              >
+                Activate AI Segment
+              </button>
+            ) : (
+              <div className="flex items-center gap-4">
+                <span className="text-[10px] font-black uppercase tracking-widest bg-white/10 px-3 py-1 border border-white/20">
+                  Segment Active
+                </span>
+                <button 
+                  onClick={() => setIsAiSegmentActive(false)}
+                  className="text-[10px] font-black uppercase tracking-widest text-white/60 hover:text-white underline"
+                >
+                  Deactivate
+                </button>
+              </div>
+            )}
           </div>
         </div>
 
@@ -5294,17 +5503,196 @@ const DispatchView = () => {
   );
 };
 
+// --- Command Palette ---
+
+const CommandPalette = () => {
+  const [isOpen, setIsOpen] = useState(false);
+  const [query, setQuery] = useState('');
+  const navigate = useNavigate();
+  const [campaigns, setCampaigns] = useState<Campaign[]>([]);
+  const [contacts, setContacts] = useState<Contact[]>([]);
+
+  useEffect(() => {
+    const handleKeyDown = (e: KeyboardEvent) => {
+      if ((e.metaKey || e.ctrlKey) && e.key === 'k') {
+        e.preventDefault();
+        setIsOpen(prev => !prev);
+      }
+      if (e.key === 'Escape') setIsOpen(false);
+    };
+    window.addEventListener('keydown', handleKeyDown);
+    return () => window.removeEventListener('keydown', handleKeyDown);
+  }, []);
+
+  useEffect(() => {
+    if (isOpen) {
+      api.getCampaigns().then(setCampaigns);
+      api.getContacts().then(setContacts);
+    }
+  }, [isOpen]);
+
+  const navItems = [
+    { name: 'Dashboard', path: '/', icon: <LayoutDashboard size={16} /> },
+    { name: 'Broadcasts', path: '/campaigns', icon: <Send size={16} /> },
+    { name: 'Audience', path: '/audiences', icon: <Users size={16} /> },
+    { name: 'Automations', path: '/automations', icon: <Zap size={16} /> },
+    { name: 'Visual Studio', path: '/visual-studio', icon: <Sparkles size={16} /> },
+    { name: 'Reports', path: '/reports', icon: <BarChart3 size={16} /> },
+    { name: 'Infrastructure', path: '/infrastructure', icon: <Shield size={16} /> },
+    { name: 'Data Layer', path: '/data-layer', icon: <Activity size={16} /> },
+  ];
+
+  const filteredNav = navItems.filter(item => item.name.toLowerCase().includes(query.toLowerCase()));
+  const filteredCampaigns = campaigns.filter(c => c.name.toLowerCase().includes(query.toLowerCase())).slice(0, 5);
+  const filteredContacts = contacts.filter(c => `${c.firstName} ${c.lastName}`.toLowerCase().includes(query.toLowerCase())).slice(0, 5);
+
+  if (!isOpen) return null;
+
+  return (
+    <div className="fixed inset-0 z-[200] flex items-start justify-center pt-[15vh] px-6 bg-ink/20 backdrop-blur-sm" onClick={() => setIsOpen(false)}>
+      <motion.div 
+        initial={{ opacity: 0, scale: 0.98, y: -10 }}
+        animate={{ opacity: 1, scale: 1, y: 0 }}
+        className="bg-bg border border-ink w-full max-w-2xl shadow-2xl overflow-hidden"
+        onClick={e => e.stopPropagation()}
+      >
+        <div className="flex items-center gap-4 p-6 border-b border-border-hairline bg-surface">
+          <Search size={20} className="text-ink/40" />
+          <input 
+            autoFocus
+            type="text" 
+            placeholder="Search broadcasts, contacts, or navigate..." 
+            className="flex-1 bg-transparent border-none outline-none font-serif text-2xl placeholder:text-ink/20"
+            value={query}
+            onChange={e => setQuery(e.target.value)}
+          />
+          <div className="px-2 py-1 border border-border-hairline text-[9px] font-black uppercase tracking-widest text-ink/40">ESC</div>
+        </div>
+
+        <div className="max-h-[60vh] overflow-y-auto p-4 space-y-6">
+          {filteredNav.length > 0 && (
+            <div className="space-y-2">
+              <p className="text-[9px] font-black uppercase tracking-widest text-ink/40 px-2">Navigation</p>
+              <div className="grid grid-cols-2 gap-1">
+                {filteredNav.map(item => (
+                  <button 
+                    key={item.path}
+                    onClick={() => { navigate(item.path); setIsOpen(false); }}
+                    className="flex items-center gap-3 p-3 hover:bg-surface text-left transition-colors group"
+                  >
+                    <span className="text-ink/40 group-hover:text-burgundy">{item.icon}</span>
+                    <span className="font-sans font-bold text-sm">{item.name}</span>
+                  </button>
+                ))}
+              </div>
+            </div>
+          )}
+
+          {filteredCampaigns.length > 0 && (
+            <div className="space-y-2">
+              <p className="text-[9px] font-black uppercase tracking-widest text-ink/40 px-2">Broadcasts</p>
+              <div className="space-y-1">
+                {filteredCampaigns.map(camp => (
+                  <button 
+                    key={camp.id}
+                    onClick={() => { navigate(`/campaigns/${camp.id}`); setIsOpen(false); }}
+                    className="flex items-center justify-between w-full p-3 hover:bg-surface text-left transition-colors group"
+                  >
+                    <div className="flex items-center gap-3">
+                      <FileText size={16} className="text-ink/40" />
+                      <span className="font-serif font-bold">{camp.name}</span>
+                    </div>
+                    <span className="text-[9px] font-black uppercase tracking-widest text-ink/20">{camp.status}</span>
+                  </button>
+                ))}
+              </div>
+            </div>
+          )}
+
+          {filteredContacts.length > 0 && (
+            <div className="space-y-2">
+              <p className="text-[9px] font-black uppercase tracking-widest text-ink/40 px-2">Contacts</p>
+              <div className="space-y-1">
+                {filteredContacts.map(contact => (
+                  <button 
+                    key={contact.id}
+                    onClick={() => { navigate('/audiences'); setIsOpen(false); }}
+                    className="flex items-center gap-3 p-3 hover:bg-surface w-full text-left transition-colors group"
+                  >
+                    <div className="w-8 h-8 bg-burgundy/5 border border-burgundy/10 flex items-center justify-center text-burgundy font-serif font-bold text-xs">
+                      {contact.firstName[0]}{contact.lastName[0]}
+                    </div>
+                    <div>
+                      <p className="font-sans font-bold text-sm">{contact.firstName} {contact.lastName}</p>
+                      <p className="text-[10px] font-mono text-ink/40 uppercase">{contact.email}</p>
+                    </div>
+                  </button>
+                ))}
+              </div>
+            </div>
+          )}
+
+          {query && filteredNav.length === 0 && filteredCampaigns.length === 0 && filteredContacts.length === 0 && (
+            <div className="py-12 text-center">
+              <p className="font-editorial italic text-2xl text-ink/20">No results for "{query}"</p>
+            </div>
+          )}
+        </div>
+
+        <div className="p-4 border-t border-border-hairline bg-surface flex justify-between items-center">
+          <div className="flex gap-4">
+            <div className="flex items-center gap-1">
+              <kbd className="px-1.5 py-0.5 border border-border-hairline bg-bg rounded text-[9px] font-black">↑↓</kbd>
+              <span className="text-[9px] font-black uppercase tracking-widest text-ink/40">Navigate</span>
+            </div>
+            <div className="flex items-center gap-1">
+              <kbd className="px-1.5 py-0.5 border border-border-hairline bg-bg rounded text-[9px] font-black">ENTER</kbd>
+              <span className="text-[9px] font-black uppercase tracking-widest text-ink/40">Select</span>
+            </div>
+          </div>
+          <p className="text-[9px] font-black uppercase tracking-widest text-burgundy">SIGNAL Command Center</p>
+        </div>
+      </motion.div>
+    </div>
+  );
+};
+
 // --- Main App Layout ---
 
 export default function App() {
   const location = useLocation();
   const [isGuideOpen, setIsGuideOpen] = useState(false);
+  const [theme, setTheme] = useState<'light' | 'dark'>(() => {
+    if (typeof window !== 'undefined') {
+      const saved = localStorage.getItem('signal-theme');
+      if (saved === 'dark' || saved === 'light') return saved;
+      return window.matchMedia('(prefers-color-scheme: dark)').matches ? 'dark' : 'light';
+    }
+    return 'light';
+  });
+
+  useEffect(() => {
+    const root = window.document.documentElement;
+    if (theme === 'dark') {
+      root.classList.add('dark');
+    } else {
+      root.classList.remove('dark');
+    }
+    localStorage.setItem('signal-theme', theme);
+  }, [theme]);
+
+  const toggleTheme = () => setTheme(prev => prev === 'light' ? 'dark' : 'light');
 
   return (
-    <div className="min-h-screen bg-bg selection:bg-burgundy selection:text-white">
-      <Masthead onOpenGuide={() => setIsGuideOpen(true)} />
+    <div className="min-h-screen bg-bg selection:bg-burgundy selection:text-white transition-colors duration-300">
+      <CommandPalette />
+      <Masthead 
+        onOpenGuide={() => setIsGuideOpen(true)} 
+        theme={theme}
+        toggleTheme={toggleTheme}
+      />
       
-      <main className="max-w-[1600px] mx-auto px-10 py-16">
+      <main className="max-w-[1600px] mx-auto px-4 sm:px-6 lg:px-10 py-8 sm:py-16">
         <AnimatePresence mode="wait">
           <motion.div
             key={location.pathname}
@@ -5337,9 +5725,9 @@ export default function App() {
 
       <UserGuideModal isOpen={isGuideOpen} onClose={() => setIsGuideOpen(false)} />
 
-      <footer className="max-w-[1600px] mx-auto px-10 py-12 border-t border-border-hairline flex justify-between items-center text-[10px] font-mono text-ink/40 uppercase tracking-widest">
+      <footer className="max-w-[1600px] mx-auto px-6 sm:px-10 py-12 border-t border-border-hairline flex flex-col sm:flex-row justify-between items-center gap-6 text-[10px] font-mono text-ink/40 uppercase tracking-widest text-center sm:text-left">
         <div>© 2026 SIGNAL BROADCAST SYSTEMS</div>
-        <div className="flex gap-8">
+        <div className="flex flex-wrap justify-center sm:justify-end gap-4 sm:gap-8">
           <a href="#" className="hover:text-burgundy transition-colors">Terms of Service</a>
           <a href="#" className="hover:text-burgundy transition-colors">Privacy Policy</a>
           <a href="#" className="hover:text-burgundy transition-colors">System Status</a>

@@ -231,6 +231,14 @@ export const api = {
     });
     return res.json();
   },
+  async generateFullContent(brief: string, tone: string): Promise<{ subject: string, content: string }> {
+    const res = await fetch('/api/ai/generate-content', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ brief, tone })
+    });
+    return res.json();
+  },
   // A/B Testing
   async getABResults(id: string): Promise<any> {
     const res = await fetch(`/api/campaigns/${id}/ab-results`);

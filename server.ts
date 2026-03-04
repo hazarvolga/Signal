@@ -1438,6 +1438,12 @@ app.post("/api/ai/predict-send-time", async (req, res) => {
   res.json(prediction);
 });
 
+app.post("/api/ai/generate-content", async (req, res) => {
+  const { brief, tone } = req.body;
+  const result = await geminiService.generateFullContent(brief, tone);
+  res.json(result);
+});
+
 // A/B Testing Endpoints
 app.get("/api/campaigns/:id/ab-results", async (req, res) => {
   const { id } = req.params;
