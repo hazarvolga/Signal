@@ -94,6 +94,10 @@ import ReactFlow, {
 
 import { useAuth, Permission } from './hooks/useAuth';
 import { EmailValidation } from './components/EmailValidation';
+import { useCollaboration } from './services/collaborationContext';
+import { HelpTooltip } from './components/HelpTooltip';
+import { UserGuideModal } from './components/UserGuide';
+import { BookOpen } from 'lucide-react';
 
 // --- Utils ---
 function cn(...inputs: ClassValue[]) {
@@ -118,7 +122,7 @@ const ProtectedRoute = ({
 
 // --- Components ---
 
-const Masthead = () => {
+const Masthead = ({ onOpenGuide }: { onOpenGuide: () => void }) => {
   const { user } = useAuth();
   const location = useLocation();
   
@@ -146,6 +150,14 @@ const Masthead = () => {
         </div>
 
         <div className="flex items-center gap-6">
+          <button 
+            onClick={onOpenGuide}
+            className="flex items-center gap-2 text-[10px] font-black uppercase tracking-widest text-burgundy hover:bg-burgundy/5 px-3 py-2 rounded transition-all border border-burgundy/20"
+          >
+            <BookOpen size={14} />
+            <span>Guide</span>
+          </button>
+          
           <div className="hidden md:flex items-center gap-2 px-3 py-1.5 bg-surface border border-border-hairline rounded text-[10px] font-mono text-ink/40">
             <Search size={12} />
             <span>CMD + K TO SEARCH</span>
@@ -176,10 +188,13 @@ const Masthead = () => {
   );
 };
 
-const SectionHeader = ({ title, subtitle, action }: { title: string, subtitle?: string, action?: React.ReactNode }) => (
+const SectionHeader = ({ title, subtitle, action, guideKey }: { title: string, subtitle?: string, action?: React.ReactNode, guideKey?: string }) => (
   <div className="flex justify-between items-end border-b border-border-hairline pb-4 mb-8">
     <div>
-      <h1 className="text-5xl font-serif font-bold text-ink mb-2">{title}</h1>
+      <div className="flex items-center gap-3 mb-2">
+        <h1 className="text-5xl font-serif font-bold text-ink">{title}</h1>
+        {guideKey && <HelpTooltip guideKey={guideKey} />}
+      </div>
       {subtitle && <p className="text-lg font-editorial italic text-ink/60">{subtitle}</p>}
     </div>
     {action}
@@ -231,6 +246,7 @@ const Commerce = () => {
       <SectionHeader 
         title="Commerce & Revenue" 
         subtitle="Monetize your editorial dispatches with integrated product feeds."
+        guideKey="commerce-revenue"
         action={
           hasPermission('integration:manage') && (
             <button 
@@ -347,7 +363,8 @@ const Commerce = () => {
 };
 
 const Collaboration = () => {
-  const { hasPermission } = useAuth();
+  const { hasPermission, user: currentUser } = useAuth();
+  const { activeUsers, cursors, activities, activityLog, joinRoom, leaveRoom, sendCursorMove, sendActivity } = useCollaboration();
   const [team, setTeam] = useState<any[]>([]);
   const [brands, setBrands] = useState<any[]>([]);
   const [approvals, setApprovals] = useState<any[]>([]);
@@ -359,7 +376,13 @@ const Collaboration = () => {
 
   useEffect(() => {
     refreshData();
-  }, []);
+    joinRoom('collaboration-hub');
+    return () => leaveRoom('collaboration-hub');
+  }, [joinRoom, leaveRoom]);
+
+  const handleMouseMove = (e: React.MouseEvent) => {
+    sendCursorMove('collaboration-hub', { x: e.clientX, y: e.clientY });
+  };
 
   const refreshData = () => {
     api.getTeam().then(setTeam);
@@ -371,6 +394,7 @@ const Collaboration = () => {
   const handleApproval = async (id: string, status: 'APPROVED' | 'REJECTED') => {
     if (!hasPermission('campaign:send')) return;
     await api.updateApprovalStatus(id, status);
+    sendActivity('collaboration-hub', `${status === 'APPROVED' ? 'approved' : 'rejected'} a request`);
     api.getApprovals().then(setApprovals);
   };
 
@@ -378,6 +402,7 @@ const Collaboration = () => {
     e.preventDefault();
     if (!hasPermission('team:manage')) return;
     await api.addRole(newRole);
+    sendActivity('collaboration-hub', `created a new role: ${newRole.name}`);
     api.getRoles().then(setRoles);
     setIsAddingRole(false);
     setNewRole({ name: '', permissions: [] });
@@ -387,6 +412,7 @@ const Collaboration = () => {
     e.preventDefault();
     if (!hasPermission('team:manage')) return;
     await api.inviteTeamMember(inviteData);
+    sendActivity('collaboration-hub', `invited ${inviteData.name} to the team`);
     refreshData();
     setIsInviting(false);
     setInviteData({ email: '', name: '', role: 'VIEWER' });
@@ -395,6 +421,7 @@ const Collaboration = () => {
   const handleUpdateRole = async (userId: string, role: string) => {
     if (!hasPermission('team:manage')) return;
     await api.updateTeamMember(userId, { role });
+    sendActivity('collaboration-hub', `updated a team member's role to ${role}`);
     refreshData();
   };
 
@@ -403,6 +430,7 @@ const Collaboration = () => {
     if (window.confirm("Are you sure you want to remove this team member?")) {
       const res = await api.deleteTeamMember(userId);
       if (res.success) {
+        sendActivity('collaboration-hub', `removed a member from the team`);
         refreshData();
       } else {
         alert("Failed to delete member. Ensure they are not the last owner.");
@@ -422,14 +450,72 @@ const Collaboration = () => {
   const pendingApprovals = approvals.filter(a => a.status === 'PENDING');
 
   return (
-    <div className="space-y-16">
+    <div className="space-y-16 relative" onMouseMove={handleMouseMove}>
+      {/* Real-time Cursors */}
+      <AnimatePresence>
+        {Object.entries(cursors).map(([socketId, data]: [string, any]) => (
+          <motion.div
+            key={socketId}
+            initial={{ opacity: 0 }}
+            animate={{ opacity: 1 }}
+            exit={{ opacity: 0 }}
+            className="fixed pointer-events-none z-[100] flex flex-col items-center"
+            style={{ left: data.position.x, top: data.position.y }}
+          >
+            <MousePointerClick size={16} className="text-burgundy fill-burgundy" />
+            <span className="bg-burgundy text-white text-[8px] font-black px-1 rounded whitespace-nowrap">
+              {data.user?.name || 'Collaborator'}
+            </span>
+          </motion.div>
+        ))}
+      </AnimatePresence>
+
       <SectionHeader 
         title="Collaboration & Enterprise" 
         subtitle="Manage your editorial team and multi-brand infrastructure."
+        guideKey="collaboration-team"
+        action={
+          <div className="flex items-center gap-2">
+            <div className="flex -space-x-2">
+              {activeUsers.map((u: any, i: number) => (
+                <div 
+                  key={u.id || i} 
+                  className="w-8 h-8 rounded-full bg-burgundy border-2 border-surface flex items-center justify-center text-white text-[10px] font-bold uppercase"
+                  title={u.name}
+                >
+                  {u.name?.[0] || '?'}
+                </div>
+              ))}
+            </div>
+            <span className="text-[10px] font-mono text-ink/40 uppercase ml-2">
+              {activeUsers.length} Active Now
+            </span>
+          </div>
+        }
       />
 
       <div className="grid grid-cols-12 gap-12">
         <div className="col-span-12 lg:col-span-7 space-y-12">
+          {/* Activity Log */}
+          <div className="bg-surface border border-border-hairline p-6 space-y-4">
+            <div className="flex justify-between items-center">
+              <h3 className="text-sm font-black uppercase tracking-widest text-ink">Live Activity Feed</h3>
+              <Activity size={14} className="text-burgundy animate-pulse" />
+            </div>
+            <div className="space-y-3 max-h-48 overflow-y-auto pr-2 custom-scrollbar">
+              {activityLog.length === 0 ? (
+                <p className="text-xs font-editorial italic text-ink/40">No recent activity.</p>
+              ) : (
+                activityLog.map((log: any) => (
+                  <div key={log.id} className="flex items-start gap-3 text-[11px]">
+                    <span className="text-burgundy font-bold">[{format(new Date(log.timestamp), 'HH:mm:ss')}]</span>
+                    <span className="font-black uppercase">{log.user?.name}</span>
+                    <span className="text-ink/60">{log.activity}</span>
+                  </div>
+                ))
+              )}
+            </div>
+          </div>
           {/* Team Management */}
           <div className="space-y-8">
             <div className="flex justify-between items-center">
@@ -755,6 +841,7 @@ const Integrations = () => {
       <SectionHeader 
         title="Integration & API" 
         subtitle="Extend SIGNAL with your existing stack and custom hooks."
+        guideKey="integrations-api"
       />
 
       <div className="space-y-8">
@@ -936,6 +1023,12 @@ const Home = () => {
 
   return (
     <div className="space-y-16">
+      <SectionHeader 
+        title="Dashboard" 
+        subtitle="Overview of your publication's performance and system health."
+        guideKey="dashboard-metrics"
+      />
+
       {/* Top Stats Strip */}
       <div className="newspaper-grid border-b border-border-hairline pb-12">
         <div className="col-span-12 lg:col-span-3">
@@ -1254,6 +1347,7 @@ const Campaigns = () => {
       <SectionHeader 
         title="Broadcasts" 
         subtitle="Manage your editorial dispatches and scheduled signals."
+        guideKey="campaign-editor"
         action={
           <button onClick={() => setIsCreating(true)} className="btn-primary flex items-center gap-2">
             <Plus size={16} /> New Broadcast
@@ -1998,6 +2092,7 @@ const Templates = () => {
       <SectionHeader 
         title="Templates" 
         subtitle="Manage reusable editorial structures for your dispatches."
+        guideKey="templates-library"
         action={
           <button onClick={() => setIsAdding(true)} className="btn-primary flex items-center gap-2">
             <Plus size={16} /> New Template
@@ -2555,6 +2650,7 @@ const Reports = () => {
       <SectionHeader 
         title="Intelligence Hub" 
         subtitle="Aggregate insights and performance data across your editorial network."
+        guideKey="reports-analytics"
       />
 
       <div className="flex gap-8 border-b border-ink pb-2">
@@ -3228,6 +3324,7 @@ const Audiences = () => {
       <SectionHeader 
         title="Audiences" 
         subtitle="Curate and segment your network of recipients."
+        guideKey="audience-segments"
         action={
           <button onClick={() => setIsAdding(true)} className="btn-primary flex items-center gap-2">
             <Plus size={16} /> Add Contact
@@ -3638,6 +3735,7 @@ const DataLayer = () => {
       <SectionHeader 
         title="Data Layer" 
         subtitle="Manage dynamic segments, custom fields, and personalization logic."
+        guideKey="data-layer"
       />
 
       <div className="newspaper-grid">
@@ -3914,6 +4012,7 @@ const Infrastructure = () => {
       <SectionHeader 
         title="Deliverability & Infrastructure" 
         subtitle="Manage sender reputation, compliance, and global suppression lists."
+        guideKey="infrastructure-api"
       />
 
       <div className="newspaper-grid">
@@ -4632,6 +4731,7 @@ const Automations = () => {
       <SectionHeader 
         title="Automations" 
         subtitle="Design visual workflows and track real-time subscriber events."
+        guideKey="automation-flows"
         action={
           <div className="flex gap-4">
             <div className="flex bg-surface border border-border-hairline p-1">
@@ -4936,6 +5036,7 @@ const VisualStudio = () => {
       <SectionHeader 
         title="AI Visual Studio" 
         subtitle="Generate bespoke editorial illustrations and brand assets using Gemini 2.5."
+        guideKey="visual-studio-canvas"
       />
 
       <div className="newspaper-grid">
@@ -5197,10 +5298,11 @@ const DispatchView = () => {
 
 export default function App() {
   const location = useLocation();
+  const [isGuideOpen, setIsGuideOpen] = useState(false);
 
   return (
     <div className="min-h-screen bg-bg selection:bg-burgundy selection:text-white">
-      <Masthead />
+      <Masthead onOpenGuide={() => setIsGuideOpen(true)} />
       
       <main className="max-w-[1600px] mx-auto px-10 py-16">
         <AnimatePresence mode="wait">
@@ -5232,6 +5334,8 @@ export default function App() {
           </motion.div>
         </AnimatePresence>
       </main>
+
+      <UserGuideModal isOpen={isGuideOpen} onClose={() => setIsGuideOpen(false)} />
 
       <footer className="max-w-[1600px] mx-auto px-10 py-12 border-t border-border-hairline flex justify-between items-center text-[10px] font-mono text-ink/40 uppercase tracking-widest">
         <div>© 2026 SIGNAL BROADCAST SYSTEMS</div>

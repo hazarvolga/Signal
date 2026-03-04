@@ -17,6 +17,8 @@ import { ValidationLog, BulkValidationJob } from '../types';
 import { motion, AnimatePresence } from 'motion/react';
 import { format } from 'date-fns';
 
+import { HelpTooltip } from './HelpTooltip';
+
 export const EmailValidation: React.FC = () => {
   const [email, setEmail] = useState('');
   const [isValidating, setIsValidating] = useState(false);
@@ -87,6 +89,7 @@ export const EmailValidation: React.FC = () => {
         <div className="flex items-center gap-3 text-burgundy">
           <ShieldCheck size={32} />
           <h1 className="text-4xl font-serif font-bold tracking-tight">Email Intelligence</h1>
+          <HelpTooltip guideKey="validation-deliverability" />
         </div>
         <p className="text-ink/60 font-serif italic text-lg max-w-2xl">
           "A production-grade verification engine designed for high-deliverability editorial dispatches. 

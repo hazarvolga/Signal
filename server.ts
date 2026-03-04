@@ -19,6 +19,8 @@ import { Queue } from "bullmq";
 import Redis from "ioredis";
 import { parse } from "csv-parse/sync";
 import multer from "multer";
+import { Server } from "socket.io";
+import http from "http";
 
 const upload = multer({ storage: multer.memoryStorage() });
 const redisConnection = process.env.REDIS_URL ? new Redis(process.env.REDIS_URL, { 
@@ -472,6 +474,47 @@ async function startServer() {
   }
   
   const app = express();
+  const httpServer = http.createServer(app);
+  const io = new Server(httpServer, {
+    cors: {
+      origin: "*",
+      methods: ["GET", "POST"]
+    }
+  });
+
+  const roomUsers = new Map<string, Map<string, any>>();
+
+  io.on("connection", (socket) => {
+    socket.on("join-room", ({ roomId, user }) => {
+      socket.join(roomId);
+      if (!roomUsers.has(roomId)) {
+        roomUsers.set(roomId, new Map());
+      }
+      roomUsers.get(roomId)!.set(socket.id, user);
+      
+      io.to(roomId).emit("room-users", Array.from(roomUsers.get(roomId)!.values()));
+    });
+
+    socket.on("cursor-move", ({ roomId, position }) => {
+      const user = roomUsers.get(roomId)?.get(socket.id);
+      socket.to(roomId).emit("user-cursor-move", { socketId: socket.id, position, user });
+    });
+
+    socket.on("activity", ({ roomId, activity }) => {
+      const user = roomUsers.get(roomId)?.get(socket.id);
+      io.to(roomId).emit("user-activity", { socketId: socket.id, activity, user });
+    });
+
+    socket.on("disconnecting", () => {
+      for (const roomId of socket.rooms) {
+        if (roomUsers.has(roomId)) {
+          roomUsers.get(roomId)!.delete(socket.id);
+          io.to(roomId).emit("room-users", Array.from(roomUsers.get(roomId)!.values()));
+        }
+      }
+    });
+  });
+
   const PORT = 3000;
 
   app.use(express.json());
@@ -1981,7 +2024,7 @@ app.delete("/api/assets/:id", async (req, res) => {
   }
 });
 
-app.listen(PORT, "0.0.0.0", () => {
+httpServer.listen(PORT, "0.0.0.0", () => {
   console.log(`SIGNAL Server running on http://localhost:${PORT}`);
 });
 }
