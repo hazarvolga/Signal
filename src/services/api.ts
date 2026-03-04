@@ -1,4 +1,4 @@
-import { User, Contact, Template, Campaign, DashboardStats, Segment, CustomFieldDefinition, Flow, Event } from '../types';
+import { User, Contact, Template, Campaign, DashboardStats, Segment, CustomFieldDefinition, Flow, Event, ValidationLog, BulkValidationJob } from '../types';
 
 export const api = {
   async getMe(): Promise<User> {
@@ -446,6 +446,86 @@ export const api = {
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ enabled }),
     });
+    return res.json();
+  },
+  
+  async getSSOConfig(): Promise<any> {
+    const res = await fetch('/api/auth/sso/config');
+    return res.json();
+  },
+
+  async updateSSOConfig(data: any): Promise<any> {
+    const res = await fetch('/api/auth/sso/config', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(data),
+    });
+    return res.json();
+  },
+
+  async trackEngagement(data: { campaignId: string, contactId?: string, type: string, value: number, sectionId?: string, metadata?: any }): Promise<any> {
+    const res = await fetch('/api/engagement', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(data),
+    });
+    return res.json();
+  },
+
+  async getEngagementAnalytics(campaignId: string): Promise<any> {
+    const res = await fetch(`/api/campaigns/${campaignId}/engagement`);
+    return res.json();
+  },
+
+  // Assets
+  async getAssets(): Promise<any[]> {
+    const res = await fetch('/api/assets');
+    return res.json();
+  },
+
+  async addAsset(data: { name: string, url: string, type: string, metadata?: any }): Promise<any> {
+    const res = await fetch('/api/assets', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(data),
+    });
+    return res.json();
+  },
+
+  async deleteAsset(id: string): Promise<{ success: boolean }> {
+    const res = await fetch(`/api/assets/${id}`, {
+      method: 'DELETE',
+    });
+    return res.json();
+  },
+
+  // Email Validation
+  async validateEmail(email: string): Promise<any> {
+    const res = await fetch('/api/validate', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ email }),
+    });
+    return res.json();
+  },
+
+  async validateBulk(file: File): Promise<{ jobId: string }> {
+    const formData = new FormData();
+    formData.append('file', file);
+    const res = await fetch('/api/validate-bulk', {
+      method: 'POST',
+      body: formData,
+    });
+    return res.json();
+  },
+
+  async getBulkJobStatus(id: string): Promise<BulkValidationJob> {
+    const res = await fetch(`/api/validate-bulk/${id}`);
+    return res.json();
+  },
+
+  async getValidationLogs(): Promise<ValidationLog[]> {
+    const res = await fetch('/api/validation-logs');
     return res.json();
   },
 };

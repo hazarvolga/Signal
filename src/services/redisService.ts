@@ -5,8 +5,24 @@ class RedisService {
 
   constructor() {
     if (process.env.REDIS_URL) {
-      this.client = new Redis(process.env.REDIS_URL);
-      console.log("Redis connected.");
+      this.client = new Redis(process.env.REDIS_URL, {
+        maxRetriesPerRequest: 3,
+        enableOfflineQueue: false,
+        retryStrategy(times) {
+          if (times > 3) return null; // Stop retrying after 3 attempts
+          return Math.min(times * 50, 2000);
+        }
+      });
+      this.client.on('error', (err: any) => {
+        if (err.code === 'ECONNREFUSED') {
+          console.warn(`Redis connection refused at ${process.env.REDIS_URL}. Caching disabled.`);
+          this.client?.disconnect();
+          this.client = null;
+        } else {
+          console.error("Redis error:", err);
+        }
+      });
+      console.log("Redis connection initialized.");
     } else {
       console.warn("REDIS_URL not set. Caching disabled.");
     }

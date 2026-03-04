@@ -256,3 +256,40 @@ export interface CampaignAnalytics {
     value: number;
   }[];
 }
+
+export interface ValidationLog {
+  id: string;
+  email: string;
+  status: 'valid' | 'invalid' | 'risky' | 'unknown';
+  score: number;
+  confidence: number;
+  details: string; // JSON string
+  organizationId: string;
+  createdAt: string;
+}
+
+export interface BulkValidationJob {
+  id: string;
+  name?: string;
+  status: 'PENDING' | 'PROCESSING' | 'COMPLETED' | 'FAILED';
+  totalCount: number;
+  processedCount: number;
+  validCount: number;
+  invalidCount: number;
+  riskyCount: number;
+  error?: string;
+  organizationId: string;
+  results?: BulkValidationResult[];
+  createdAt: string;
+  updatedAt: string;
+}
+
+export interface BulkValidationResult {
+  id: string;
+  jobId: string;
+  email: string;
+  status: string;
+  score: number;
+  details: string;
+  createdAt: string;
+}

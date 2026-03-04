@@ -41,6 +41,9 @@ model Organization {
   roles       Role[]
   consentLogs ConsentLog[]
   dataRequests DataRequest[]
+  assets      Asset[]
+  validationLogs ValidationLog[]
+  bulkValidationJobs BulkValidationJob[]
 
   // SSO Config
   ssoEnabled      Boolean  @default(false)
@@ -48,6 +51,8 @@ model Organization {
   ssoClientId     String?
   ssoClientSecret String?
   ssoIssuer       String?
+  ssoEntryPoint   String?
+  ssoCert         String?
 }
 
 model WorkflowTemplate {
@@ -210,6 +215,7 @@ model Contact {
   revenue        Revenue[]
   consentLogs    ConsentLog[]
   dataRequests   DataRequest[]
+  engagement     EngagementEvent[]
 
   @@unique([email, organizationId])
 }
@@ -281,6 +287,7 @@ model Campaign {
   revenue        Revenue[]
   approvals      ApprovalRequest[]
   variations     CampaignVariation[]
+  engagement     EngagementEvent[]
 }
 
 model CampaignVariation {
@@ -339,6 +346,19 @@ model Event {
   contactId      String
   contact        Contact  @relation(fields: [contactId], references: [id])
   timestamp      DateTime @default(now())
+}
+
+model EngagementEvent {
+  id         String   @id @default(cuid())
+  campaignId String
+  campaign   Campaign @relation(fields: [campaignId], references: [id])
+  contactId  String?
+  contact    Contact? @relation(fields: [contactId], references: [id])
+  type       String   // 'scroll', 'read_time', 'click'
+  value      Float    // scroll percentage or time in seconds
+  sectionId  String?  // ID of the section being read
+  metadata   String?  // Extra JSON data
+  timestamp  DateTime @default(now())
 }
 
 model Flow {
@@ -411,4 +431,68 @@ model CustomFieldDefinition {
   updatedAt      DateTime     @updatedAt
 
   @@unique([key, organizationId])
+}
+
+model Asset {
+  id             String       @id @default(cuid())
+  name           String
+  url            String
+  type           String       @default("IMAGE") // IMAGE, VIDEO, DOCUMENT
+  mimeType       String?
+  size           Int?
+  metadata       String?      // JSON string for generation parameters
+  organizationId String
+  organization   Organization @relation(fields: [organizationId], references: [id])
+  createdAt      DateTime     @default(now())
+  updatedAt      DateTime     @updatedAt
+}
+
+model ValidationLog {
+  id             String       @id @default(cuid())
+  email          String
+  status         String       // VALID, INVALID, RISKY, UNKNOWN
+  score          Int
+  confidence     Float
+  details        String       @default("{}") // JSON string
+  organizationId String
+  organization   Organization @relation(fields: [organizationId], references: [id])
+  createdAt      DateTime     @default(now())
+}
+
+model BulkValidationJob {
+  id             String       @id @default(cuid())
+  name           String?
+  status         String       @default("PENDING") // PENDING, PROCESSING, COMPLETED, FAILED
+  totalCount     Int          @default(0)
+  processedCount Int          @default(0)
+  validCount     Int          @default(0)
+  invalidCount   Int          @default(0)
+  riskyCount     Int          @default(0)
+  error          String?
+  organizationId String
+  organization   Organization @relation(fields: [organizationId], references: [id])
+  results        BulkValidationResult[]
+  createdAt      DateTime     @default(now())
+  updatedAt      DateTime     @updatedAt
+}
+
+model BulkValidationResult {
+  id             String            @id @default(cuid())
+  jobId          String
+  job            BulkValidationJob @relation(fields: [jobId], references: [id])
+  email          String
+  status         String
+  score          Int
+  details        String            @default("{}")
+  createdAt      DateTime          @default(now())
+}
+
+model DomainIntelligence {
+  id             String   @id @default(cuid())
+  domain         String   @unique
+  isDisposable   Boolean  @default(false)
+  isRoleBased    Boolean  @default(false)
+  isCatchAll     Boolean  @default(false)
+  mxRecords      String   @default("[]") // JSON string
+  lastCheckedAt  DateTime @default(now())
 }

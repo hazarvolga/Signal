@@ -2,15 +2,45 @@ import express from "express";
 import { createServer as createViteServer } from "vite";
 import path from "path";
 import { fileURLToPath } from "url";
-import { PrismaClient } from "@prisma/client";
 import { mjmlTemplates } from "./src/data/mjmlTemplates";
 import { geminiService } from "./src/services/geminiService";
 import { redisService } from "./src/services/redisService";
+import passport from "passport";
+import session from "express-session";
+import { Strategy as SAMLStrategy } from "passport-saml";
+import { Strategy as OIDCStrategy } from "passport-openidconnect";
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
 
-const prisma = new PrismaClient();
+import { prisma } from "./src/services/prisma";
+import { ValidationEngine } from "./src/services/validation/engine";
+import { Queue } from "bullmq";
+import Redis from "ioredis";
+import { parse } from "csv-parse/sync";
+import multer from "multer";
+
+const upload = multer({ storage: multer.memoryStorage() });
+const redisConnection = process.env.REDIS_URL ? new Redis(process.env.REDIS_URL, { 
+  maxRetriesPerRequest: null,
+  enableOfflineQueue: false,
+  retryStrategy(times) {
+    if (times > 3) return null;
+    return Math.min(times * 100, 3000);
+  }
+}) : null;
+
+if (redisConnection) {
+  redisConnection.on('error', (err: any) => {
+    if (err.code === 'ECONNREFUSED') {
+      console.warn("Redis connection refused. Bulk validation features will be disabled.");
+    }
+  });
+}
+
+const validationQueue = redisConnection ? new Queue('bulk-validation', { connection: redisConnection as any }) : null;
+
+import "./src/workers/validationWorker";
 
 async function seed() {
   let org = await prisma.organization.findFirst();
@@ -435,12 +465,38 @@ async function seed() {
 }
 
 async function startServer() {
-  await seed();
+  try {
+    await seed();
+  } catch (err) {
+    console.error("Database seeding failed. Ensure DATABASE_URL is correct.", err);
+  }
   
   const app = express();
   const PORT = 3000;
 
   app.use(express.json());
+  app.use(session({
+    secret: process.env.SESSION_SECRET || "signal-secret-key",
+    resave: false,
+    saveUninitialized: false,
+    cookie: { 
+      secure: process.env.NODE_ENV === "production",
+      sameSite: "none"
+    }
+  }));
+
+  app.use(passport.initialize());
+  app.use(passport.session());
+
+  passport.serializeUser((user: any, done) => done(null, user.id));
+  passport.deserializeUser(async (id: string, done) => {
+    try {
+      const user = await prisma.user.findUnique({ where: { id } });
+      done(null, user);
+    } catch (err) {
+      done(err);
+    }
+  });
 
   // --- SOC2 Audit Logging Middleware ---
   app.use(async (req, res, next) => {
@@ -508,7 +564,13 @@ async function startServer() {
 
   publicRouter.get("/contacts", async (req, res) => {
     const org = (req as any).organization;
+    const cacheKey = `api:contacts:${org.id}`;
+    
+    const cached = await redisService.get<any[]>(cacheKey);
+    if (cached) return res.json(cached);
+
     const contacts = await prisma.contact.findMany({ where: { organizationId: org.id } });
+    await redisService.set(cacheKey, contacts, 300); // Cache for 5 mins
     res.json(contacts);
   });
 
@@ -520,16 +582,143 @@ async function startServer() {
       update: { firstName, lastName },
       create: { email, firstName, lastName, organizationId: org.id }
     });
+    
+    // Invalidate cache
+    await redisService.del(`api:contacts:${org.id}`);
+    
     res.json(contact);
   });
 
   publicRouter.get("/campaigns", async (req, res) => {
     const org = (req as any).organization;
+    const cacheKey = `api:campaigns:${org.id}`;
+    
+    const cached = await redisService.get<any[]>(cacheKey);
+    if (cached) return res.json(cached);
+
     const campaigns = await prisma.campaign.findMany({ where: { organizationId: org.id } });
+    await redisService.set(cacheKey, campaigns, 300);
     res.json(campaigns);
   });
 
+  publicRouter.get("/templates", async (req, res) => {
+    const org = (req as any).organization;
+    const templates = await prisma.template.findMany({ where: { organizationId: org.id } });
+    res.json(templates);
+  });
+
+  publicRouter.get("/segments", async (req, res) => {
+    const org = (req as any).organization;
+    const segments = await prisma.segment.findMany({ where: { organizationId: org.id } });
+    res.json(segments);
+  });
+
+  publicRouter.get("/docs", (req, res) => {
+    res.json({
+      version: "v1",
+      baseUrl: "/api/v1",
+      endpoints: [
+        { path: "/contacts", methods: ["GET", "POST"], description: "Manage audience contacts" },
+        { path: "/campaigns", methods: ["GET"], description: "List all email campaigns" },
+        { path: "/templates", methods: ["GET"], description: "Retrieve MJML email templates" },
+        { path: "/segments", methods: ["GET"], description: "List audience segments" },
+      ],
+      authentication: {
+        header: "x-api-key",
+        type: "Bearer-like API Key"
+      },
+      rateLimit: "100 requests per minute"
+    });
+  });
+
   app.use("/api/v1", publicRouter);
+
+  app.get("/api/v1/documentation", (req, res) => {
+    res.send(`
+      <!DOCTYPE html>
+      <html lang="en">
+      <head>
+          <meta charset="UTF-8">
+          <meta name="viewport" content="width=device-width, initial-scale=1.0">
+          <title>SIGNAL Public API Documentation</title>
+          <script src="https://cdn.tailwindcss.com"></script>
+          <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;600;800&family=JetBrains+Mono&family=Playfair+Display:ital,wght@0,900;1,900&display=swap" rel="stylesheet">
+          <style>
+              body { font-family: 'Inter', sans-serif; background-color: #F5F2EC; color: #1A1814; }
+              .serif { font-family: 'Playfair Display', serif; }
+              .mono { font-family: 'JetBrains Mono', monospace; }
+              .endpoint-card { background: white; border: 1px solid #1A1814; }
+              .method-tag { font-size: 10px; font-weight: 800; text-transform: uppercase; padding: 2px 6px; border: 1px solid currentColor; }
+          </style>
+      </head>
+      <body class="p-8 md:p-16 max-w-5xl mx-auto">
+          <header class="mb-16 border-b border-black/10 pb-8">
+              <div class="text-[10px] font-extrabold uppercase tracking-[0.2em] text-[#8B1A1A] mb-4">Developer Portal</div>
+              <h1 class="serif text-6xl md:text-8xl mb-6">Public API <span class="italic font-normal">v1</span></h1>
+              <p class="text-xl text-black/60 max-w-2xl">Integrate SIGNAL's enterprise-grade marketing automation into your own applications. Secure, scalable, and built for developers.</p>
+          </header>
+
+          <section class="mb-16">
+              <h2 class="text-sm font-extrabold uppercase tracking-widest mb-8 border-l-4 border-[#8B1A1A] pl-4">Authentication</h2>
+              <div class="endpoint-card p-8">
+                  <p class="mb-4">All requests must include your API key in the <code class="mono bg-black/5 px-2 py-1 rounded text-sm">x-api-key</code> header.</p>
+                  <div class="mono bg-[#1A1814] text-white p-4 text-sm overflow-x-auto">
+                      curl -H "x-api-key: YOUR_API_KEY" https://signal.app/api/v1/contacts
+                  </div>
+              </div>
+          </section>
+
+          <section class="mb-16">
+              <h2 class="text-sm font-extrabold uppercase tracking-widest mb-8 border-l-4 border-[#8B1A1A] pl-4">Endpoints</h2>
+              <div class="space-y-6">
+                  <!-- Contacts -->
+                  <div class="endpoint-card p-8">
+                      <div class="flex items-center gap-4 mb-4">
+                          <span class="method-tag text-emerald-700">GET</span>
+                          <code class="mono font-bold">/contacts</code>
+                      </div>
+                      <p class="text-sm text-black/60 mb-6">Retrieve a list of all contacts in your organization.</p>
+                      <div class="text-[10px] font-bold uppercase text-black/40 mb-2">Response Example</div>
+                      <pre class="mono bg-black/5 p-4 text-xs overflow-x-auto">[{"id": "...", "email": "user@example.com", ...}]</pre>
+                  </div>
+
+                  <div class="endpoint-card p-8">
+                      <div class="flex items-center gap-4 mb-4">
+                          <span class="method-tag text-blue-700">POST</span>
+                          <code class="mono font-bold">/contacts</code>
+                      </div>
+                      <p class="text-sm text-black/60 mb-6">Create or update a contact.</p>
+                      <div class="text-[10px] font-bold uppercase text-black/40 mb-2">Request Body</div>
+                      <pre class="mono bg-black/5 p-4 text-xs overflow-x-auto">{"email": "new@example.com", "firstName": "John"}</pre>
+                  </div>
+
+                  <!-- Campaigns -->
+                  <div class="endpoint-card p-8">
+                      <div class="flex items-center gap-4 mb-4">
+                          <span class="method-tag text-emerald-700">GET</span>
+                          <code class="mono font-bold">/campaigns</code>
+                      </div>
+                      <p class="text-sm text-black/60 mb-6">List all email campaigns and their current status.</p>
+                  </div>
+
+                  <!-- Templates -->
+                  <div class="endpoint-card p-8">
+                      <div class="flex items-center gap-4 mb-4">
+                          <span class="method-tag text-emerald-700">GET</span>
+                          <code class="mono font-bold">/templates</code>
+                      </div>
+                      <p class="text-sm text-black/60 mb-6">Retrieve your MJML email templates.</p>
+                  </div>
+              </div>
+          </section>
+
+          <footer class="mt-32 pt-8 border-t border-black/10 text-[10px] font-bold uppercase tracking-widest text-black/40">
+              &copy; 2026 SIGNAL Editorial Infrastructure. SOC2 Type II Compliant.
+          </footer>
+      </body>
+      </html>
+    `);
+  });
 
   // --- API Keys Management ---
   app.get("/api/keys", async (req, res) => {
@@ -655,7 +844,90 @@ async function startServer() {
     res.json(user);
   });
 
-  // Dashboard Summary
+  // Email Validation API
+  app.post("/api/validate", async (req, res) => {
+    const { email } = req.body;
+    const org = await prisma.organization.findFirst();
+    if (!org) return res.status(404).json({ error: "Org not found" });
+
+    // Rate limiting: 10 req/sec
+    const rateLimitKey = `rl:validate:${org.id}`;
+    const { remaining, reset } = await redisService.rateLimit(rateLimitKey, 10, 1);
+    
+    res.set('X-RateLimit-Remaining', remaining.toString());
+    res.set('X-RateLimit-Reset', reset.toString());
+
+    if (remaining === 0) {
+      return res.status(429).json({ error: "Too many requests" });
+    }
+
+    try {
+      const result = await ValidationEngine.validate(email);
+      
+      await prisma.validationLog.create({
+        data: {
+          email,
+          status: result.status,
+          score: result.score,
+          confidence: result.confidence,
+          details: JSON.stringify(result.details),
+          organizationId: org.id
+        }
+      });
+
+      res.json(result);
+    } catch (e) {
+      res.status(500).json({ error: "Validation failed" });
+    }
+  });
+
+  app.post("/api/validate-bulk", upload.single('file'), async (req, res) => {
+    const org = await prisma.organization.findFirst();
+    if (!org) return res.status(404).json({ error: "Org not found" });
+    if (!req.file) return res.status(400).json({ error: "No file uploaded" });
+
+    try {
+      const content = req.file.buffer.toString();
+      const records = parse(content, { columns: true, skip_empty_lines: true });
+      const emails = records.map((r: any) => r.email).filter(Boolean);
+
+      const job = await prisma.bulkValidationJob.create({
+        data: {
+          name: req.file.originalname,
+          organizationId: org.id,
+          totalCount: emails.length
+        }
+      });
+
+      if (validationQueue) {
+        await validationQueue.add('process-bulk', { jobId: job.id, emails });
+      } else {
+        return res.status(503).json({ error: "Bulk validation service is unavailable (Redis not configured)" });
+      }
+
+      res.json({ jobId: job.id, message: "Bulk validation started" });
+    } catch (e) {
+      res.status(500).json({ error: "Failed to start bulk validation" });
+    }
+  });
+
+  app.get("/api/validate-bulk/:id", async (req, res) => {
+    const job = await prisma.bulkValidationJob.findUnique({
+      where: { id: req.params.id },
+      include: { results: { take: 100 } } // Limit results for status check
+    });
+    res.json(job);
+  });
+
+  app.get("/api/validation-logs", async (req, res) => {
+    const org = await prisma.organization.findFirst();
+    const logs = await prisma.validationLog.findMany({
+      where: { organizationId: org?.id },
+      orderBy: { createdAt: 'desc' },
+      take: 100
+    });
+    res.json(logs);
+  });
   app.get("/api/stats/summary", async (req, res) => {
     const org = await prisma.organization.findFirst();
     if (!org) return res.status(404).json({ error: "Org not found" });
@@ -1453,63 +1725,123 @@ app.get("/api/webhooks", async (req, res) => {
   res.json(webhooks);
 });
 
-// SSO (Enterprise)
-app.get("/api/auth/sso/url", async (req, res) => {
+// --- SSO (Enterprise) ---
+app.get("/api/auth/sso/config", async (req, res) => {
   const org = await prisma.organization.findFirst();
-  if (!org) return res.status(404).json({ error: "Org not found" });
+  if (!org) return res.status(404).json({ error: "Organization not found" });
+  res.json({
+    ssoEnabled: org.ssoEnabled,
+    ssoDomain: org.ssoDomain,
+    ssoClientId: org.ssoClientId,
+    ssoIssuer: org.ssoIssuer,
+    // Don't send the secret to the client
+  });
+});
 
-  const clientId = process.env.SSO_CLIENT_ID;
-  const issuer = process.env.SSO_ISSUER;
-  const redirectUri = `${process.env.APP_URL || `http://localhost:3000`}/auth/sso/callback`;
+app.post("/api/auth/sso/config", async (req, res) => {
+  const org = await prisma.organization.findFirst();
+  if (!org) return res.status(404).json({ error: "Organization not found" });
 
-  if (!clientId || !issuer) {
-    // Return a mock URL for demonstration if not configured
-    return res.json({ 
-      url: `/auth/sso/mock-login?orgId=${org.id}`,
-      isMock: true 
-    });
-  }
-
-  const params = new URLSearchParams({
-    client_id: clientId,
-    redirect_uri: redirectUri,
-    response_type: 'code',
-    scope: 'openid profile email',
-    state: org.id,
+  const { ssoEnabled, ssoDomain, ssoClientId, ssoClientSecret, ssoIssuer, ssoEntryPoint, ssoCert } = req.body;
+  
+  const updated = await prisma.organization.update({
+    where: { id: org.id },
+    data: {
+      ssoEnabled,
+      ssoDomain,
+      ssoClientId,
+      ssoClientSecret,
+      ssoIssuer,
+      ssoEntryPoint,
+      ssoCert,
+    },
   });
 
-  res.json({ url: `${issuer}/authorize?${params.toString()}` });
+  res.json(updated);
+});
+
+app.get("/api/auth/sso/url", async (req, res) => {
+  const { domain } = req.query;
+  const org = await prisma.organization.findFirst({
+    where: domain ? { ssoDomain: domain as string } : {}
+  });
+
+  if (!org || !org.ssoEnabled) {
+    return res.status(400).json({ error: "SSO not enabled for this domain" });
+  }
+
+  const redirectUri = `${process.env.APP_URL || `http://localhost:3000`}/auth/sso/callback`;
+
+  if (org.ssoIssuer) {
+    const params = new URLSearchParams({
+      client_id: org.ssoClientId || "",
+      redirect_uri: redirectUri,
+      response_type: 'code',
+      scope: 'openid profile email',
+      state: org.id,
+    });
+    return res.json({ url: `${org.ssoIssuer}/authorize?${params.toString()}` });
+  }
+
+  // Fallback to mock if no issuer
+  return res.json({ 
+    url: `/auth/sso/mock-login?orgId=${org.id}`,
+    isMock: true 
+  });
 });
 
 app.get("/auth/sso/callback", async (req, res) => {
   const { code, state: orgId } = req.query;
   
-  // In a real app, we'd exchange the code for tokens here.
-  // For this demo, we'll simulate a successful login.
-  
-  res.send(`
-    <html>
-      <body style="font-family: sans-serif; display: flex; align-items: center; justify-content: center; height: 100vh; background: #F5F2EC; margin: 0;">
-        <div style="text-align: center; padding: 40px; background: white; border: 1px solid #1A1814; box-shadow: 0 4px 20px rgba(0,0,0,0.05);">
-          <h2 style="font-family: serif; margin-top: 0;">SSO Authentication Successful</h2>
-          <p style="font-size: 14px; color: #666;">Your enterprise account has been linked successfully.</p>
-          <div style="margin: 20px 0; color: #2D5A27; font-weight: bold;">✓ Verified</div>
-          <p style="font-size: 10px; color: #999;">This window will close automatically.</p>
-          <script>
-            if (window.opener) {
-              window.opener.postMessage({ type: 'SSO_AUTH_SUCCESS' }, '*');
-              setTimeout(() => window.close(), 2000);
-            } else {
-              window.location.href = '/';
-            }
-          </script>
-        </div>
-      </body>
-    </html>
-  `);
+  const org = await prisma.organization.findUnique({ where: { id: orgId as string } });
+  if (!org) return res.status(404).send("Organization not found");
+
+  // Simulate user info from IdP
+  const email = "enterprise-user@signal.app";
+  const name = "Enterprise User";
+
+  let user = await prisma.user.findUnique({ where: { email } });
+  if (!user) {
+    user = await prisma.user.create({
+      data: {
+        email,
+        name,
+        organizationId: org.id,
+        role: "EDITOR",
+        status: "ACTIVE",
+        ssoProvider: "OIDC",
+        ssoId: `sso-${Date.now()}`
+      }
+    });
+  }
+
+  // Log the user in (Passport session)
+  req.login(user, (err) => {
+    if (err) return res.status(500).send("Login failed");
+    
+    res.send(`
+      <html>
+        <body style="font-family: sans-serif; display: flex; align-items: center; justify-content: center; height: 100vh; background: #F5F2EC; margin: 0;">
+          <div style="text-align: center; padding: 40px; background: white; border: 1px solid #1A1814; box-shadow: 0 4px 20px rgba(0,0,0,0.05);">
+            <h2 style="font-family: serif; margin-top: 0;">SSO Authentication Successful</h2>
+            <p style="font-size: 14px; color: #666;">Your enterprise account has been linked successfully.</p>
+            <div style="margin: 20px 0; color: #2D5A27; font-weight: bold;">✓ Verified</div>
+            <p style="font-size: 10px; color: #999;">This window will close automatically.</p>
+            <script>
+              if (window.opener) {
+                window.opener.postMessage({ type: 'SSO_AUTH_SUCCESS', user: ${JSON.stringify(user)} }, '*');
+                setTimeout(() => window.close(), 2000);
+              } else {
+                window.location.href = '/';
+              }
+            </script>
+          </div>
+        </body>
+      </html>
+    `);
+  });
 });
 
-// Mock SSO Login Page
 app.get("/auth/sso/mock-login", (req, res) => {
   const { orgId } = req.query;
   res.send(`
@@ -1540,6 +1872,113 @@ app.post("/api/me/mfa", async (req, res) => {
     data: { mfaEnabled: enabled }
   });
   res.json(updatedUser);
+});
+
+// --- Engagement Tracking ---
+
+app.post("/api/engagement", async (req, res) => {
+  const { campaignId, contactId, type, value, sectionId, metadata } = req.body;
+  
+  try {
+    const event = await prisma.engagementEvent.create({
+      data: {
+        campaignId,
+        contactId,
+        type,
+        value: parseFloat(value),
+        sectionId,
+        metadata: metadata ? JSON.stringify(metadata) : null,
+      }
+    });
+    res.json(event);
+  } catch (error) {
+    console.error("Error creating engagement event:", error);
+    res.status(500).json({ error: "Failed to record engagement" });
+  }
+});
+
+app.get("/api/campaigns/:id/engagement", async (req, res) => {
+  const { id } = req.params;
+  
+  try {
+    const events = await prisma.engagementEvent.findMany({
+      where: { campaignId: id },
+      orderBy: { timestamp: 'asc' }
+    });
+    
+    // Aggregate data for heatmap and metrics
+    const totalReadTime = events
+      .filter(e => e.type === 'read_time')
+      .reduce((acc, e) => acc + e.value, 0);
+      
+    const avgScrollDepth = events
+      .filter(e => e.type === 'scroll')
+      .reduce((acc, e, _, arr) => acc + (e.value / arr.length), 0);
+      
+    const sectionEngagement = events.reduce((acc: any, e) => {
+      if (e.sectionId) {
+        if (!acc[e.sectionId]) acc[e.sectionId] = { readTime: 0, views: 0 };
+        if (e.type === 'read_time') acc[e.sectionId].readTime += e.value;
+        if (e.type === 'scroll') acc[e.sectionId].views += 1;
+      }
+      return acc;
+    }, {});
+
+    res.json({
+      events,
+      summary: {
+        totalReadTime,
+        avgScrollDepth,
+        sectionEngagement
+      }
+    });
+  } catch (error) {
+    res.status(500).json({ error: "Failed to fetch engagement data" });
+  }
+});
+
+// --- Asset Management ---
+
+app.get("/api/assets", async (req, res) => {
+  try {
+    const assets = await prisma.asset.findMany({
+      orderBy: { createdAt: 'desc' }
+    });
+    res.json(assets);
+  } catch (error) {
+    res.status(500).json({ error: "Failed to fetch assets" });
+  }
+});
+
+app.post("/api/assets", async (req, res) => {
+  const { name, url, type, metadata } = req.body;
+  const org = await prisma.organization.findFirst();
+  if (!org) return res.status(404).json({ error: "Organization not found" });
+
+  try {
+    const asset = await prisma.asset.create({
+      data: {
+        name,
+        url,
+        type,
+        metadata: metadata ? JSON.stringify(metadata) : null,
+        organizationId: org.id
+      }
+    });
+    res.json(asset);
+  } catch (error) {
+    res.status(500).json({ error: "Failed to create asset" });
+  }
+});
+
+app.delete("/api/assets/:id", async (req, res) => {
+  const { id } = req.params;
+  try {
+    await prisma.asset.delete({ where: { id } });
+    res.json({ success: true });
+  } catch (error) {
+    res.status(500).json({ error: "Failed to delete asset" });
+  }
 });
 
 app.listen(PORT, "0.0.0.0", () => {
