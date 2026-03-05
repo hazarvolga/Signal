@@ -55,7 +55,8 @@ import {
   Redo,
   LayoutTemplate,
   StepForward,
-  RotateCcw
+  RotateCcw,
+  Trophy
 } from 'lucide-react';
 import { motion, AnimatePresence } from 'motion/react';
 import { GoogleGenAI } from "@google/genai";
@@ -2114,42 +2115,77 @@ const Campaigns = () => {
               </div>
               <div className="p-10 space-y-8">
                 <div className="grid grid-cols-2 gap-8">
-                  <div className="space-y-4 p-6 border border-border-hairline bg-surface">
+                  {/* Variation A */}
+                  <div className={cn(
+                    "relative space-y-4 p-6 border transition-all",
+                    (selectedAbCampaign.winnerCriteria === 'OPEN_RATE' ? abResults.variationA.rate > abResults.variationB.rate : abResults.variationA.clicks > abResults.variationB.clicks)
+                      ? "border-emerald-500 bg-emerald-50/50"
+                      : "border-border-hairline bg-surface"
+                  )}>
+                    {(selectedAbCampaign.winnerCriteria === 'OPEN_RATE' ? abResults.variationA.rate > abResults.variationB.rate : abResults.variationA.clicks > abResults.variationB.clicks) && (
+                      <div className="absolute -top-3 left-1/2 -translate-x-1/2 bg-emerald-500 text-white px-3 py-1 text-[8px] font-black uppercase tracking-widest rounded-full shadow-lg flex items-center gap-1">
+                        <Trophy size={10} />
+                        Leading Winner
+                      </div>
+                    )}
                     <p className="font-sans font-black uppercase tracking-widest text-[10px] text-burgundy">Variation A</p>
                     <p className="font-serif text-lg font-bold">"{selectedAbCampaign.subject}"</p>
                     <div className="grid grid-cols-2 gap-4 pt-4 border-t border-border-hairline">
-                      <div>
+                      <div className={cn(selectedAbCampaign.winnerCriteria === 'OPEN_RATE' && "text-emerald-600")}>
                         <p className="metric-label">Open Rate</p>
                         <p className="text-2xl font-serif font-bold">{abResults.variationA.rate}%</p>
                       </div>
-                      <div>
+                      <div className={cn(selectedAbCampaign.winnerCriteria === 'CLICK_RATE' && "text-emerald-600")}>
                         <p className="metric-label">Clicks</p>
                         <p className="text-2xl font-serif font-bold">{abResults.variationA.clicks}</p>
                       </div>
                     </div>
                     <button 
                       onClick={() => handlePickWinner(selectedAbCampaign.id, 'A')}
-                      className="w-full mt-4 py-2 border border-burgundy text-burgundy font-sans font-black uppercase tracking-widest text-[10px] hover:bg-burgundy hover:text-white transition-all"
+                      className={cn(
+                        "w-full mt-4 py-2 font-sans font-black uppercase tracking-widest text-[10px] transition-all border",
+                        (selectedAbCampaign.winnerCriteria === 'OPEN_RATE' ? abResults.variationA.rate > abResults.variationB.rate : abResults.variationA.clicks > abResults.variationB.clicks)
+                          ? "bg-emerald-500 border-emerald-500 text-white hover:bg-emerald-600"
+                          : "border-burgundy text-burgundy hover:bg-burgundy hover:text-white"
+                      )}
                     >
                       Select as Winner
                     </button>
                   </div>
-                  <div className="space-y-4 p-6 border border-burgundy bg-burgundy/5">
+
+                  {/* Variation B */}
+                  <div className={cn(
+                    "relative space-y-4 p-6 border transition-all",
+                    (selectedAbCampaign.winnerCriteria === 'OPEN_RATE' ? abResults.variationB.rate > abResults.variationA.rate : abResults.variationB.clicks > abResults.variationA.clicks)
+                      ? "border-emerald-500 bg-emerald-50/50"
+                      : "border-border-hairline bg-surface"
+                  )}>
+                    {(selectedAbCampaign.winnerCriteria === 'OPEN_RATE' ? abResults.variationB.rate > abResults.variationA.rate : abResults.variationB.clicks > abResults.variationA.clicks) && (
+                      <div className="absolute -top-3 left-1/2 -translate-x-1/2 bg-emerald-500 text-white px-3 py-1 text-[8px] font-black uppercase tracking-widest rounded-full shadow-lg flex items-center gap-1">
+                        <Trophy size={10} />
+                        Leading Winner
+                      </div>
+                    )}
                     <p className="font-sans font-black uppercase tracking-widest text-[10px] text-burgundy">Variation B</p>
                     <p className="font-serif text-lg font-bold">"{selectedAbCampaign.subjectB}"</p>
-                    <div className="grid grid-cols-2 gap-4 pt-4 border-t border-burgundy/20">
-                      <div>
+                    <div className="grid grid-cols-2 gap-4 pt-4 border-t border-border-hairline">
+                      <div className={cn(selectedAbCampaign.winnerCriteria === 'OPEN_RATE' && "text-emerald-600")}>
                         <p className="metric-label">Open Rate</p>
                         <p className="text-2xl font-serif font-bold">{abResults.variationB.rate}%</p>
                       </div>
-                      <div>
+                      <div className={cn(selectedAbCampaign.winnerCriteria === 'CLICK_RATE' && "text-emerald-600")}>
                         <p className="metric-label">Clicks</p>
                         <p className="text-2xl font-serif font-bold">{abResults.variationB.clicks}</p>
                       </div>
                     </div>
                     <button 
                       onClick={() => handlePickWinner(selectedAbCampaign.id, 'B')}
-                      className="w-full mt-4 py-2 bg-burgundy text-white font-sans font-black uppercase tracking-widest text-[10px] hover:bg-burgundy/90 transition-all"
+                      className={cn(
+                        "w-full mt-4 py-2 font-sans font-black uppercase tracking-widest text-[10px] transition-all border",
+                        (selectedAbCampaign.winnerCriteria === 'OPEN_RATE' ? abResults.variationB.rate > abResults.variationA.rate : abResults.variationB.clicks > abResults.variationA.clicks)
+                          ? "bg-emerald-500 border-emerald-500 text-white hover:bg-emerald-600"
+                          : "border-burgundy text-burgundy hover:bg-burgundy hover:text-white"
+                      )}
                     >
                       Select as Winner
                     </button>
@@ -2157,7 +2193,7 @@ const Campaigns = () => {
                 </div>
                 <div className="p-4 bg-ink text-white text-center">
                   <p className="text-[10px] font-mono uppercase tracking-widest">
-                    AI Recommendation: <span className="text-burgundy font-black">Variation B</span> is performing 15% better in open rates.
+                    AI Recommendation: <span className="text-emerald-400 font-black">Variation {abResults.variationA.rate > abResults.variationB.rate ? 'A' : 'B'}</span> is performing better based on your {selectedAbCampaign.winnerCriteria === 'OPEN_RATE' ? 'open rate' : 'click rate'} criteria.
                   </p>
                 </div>
               </div>

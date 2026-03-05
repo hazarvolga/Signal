@@ -1503,13 +1503,23 @@ app.get("/api/campaigns/:id/ab-results", async (req, res) => {
 app.post("/api/campaigns/:id/pick-winner", async (req, res) => {
   const { id } = req.params;
   const { winnerVariation } = req.body; // 'A' or 'B'
-  const campaign = await prisma.campaign.update({
+  
+  const campaign = await prisma.campaign.findUnique({ where: { id } });
+  if (!campaign) return res.status(404).json({ error: "Campaign not found" });
+
+  const updateData: any = { status: 'SENT' };
+  
+  if (winnerVariation === 'B' && campaign.subjectB && campaign.contentB) {
+    updateData.subject = campaign.subjectB;
+    updateData.content = campaign.contentB;
+  }
+
+  const updatedCampaign = await prisma.campaign.update({
     where: { id },
-    data: { status: 'SENT' }
+    data: updateData
   });
   
-  // In a real app, we'd send the remaining emails with the winner variation
-  res.json(campaign);
+  res.json(updatedCampaign);
 });
 
 // Commerce & Products
