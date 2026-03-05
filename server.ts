@@ -1290,6 +1290,48 @@ async function startServer() {
     res.json({ success: true });
   });
 
+  app.get("/api/flows/:id/analytics", async (req, res) => {
+    const flow = await prisma.flow.findUnique({ where: { id: req.params.id } });
+    if (!flow) return res.status(404).json({ error: "Flow not found" });
+
+    const nodes = JSON.parse(flow.nodes || "[]");
+    const analytics: any = {};
+
+    nodes.forEach((node: any) => {
+      // Mock stats based on node type
+      if (node.data.type === 'Trigger') {
+        analytics[node.id] = {
+          entries: Math.floor(Math.random() * 5000) + 1000,
+        };
+      } else if (node.data.type === 'Action' && node.data.label === 'Send Email') {
+        const sent = Math.floor(Math.random() * 4000) + 500;
+        const opened = Math.floor(sent * (0.2 + Math.random() * 0.3));
+        const clicked = Math.floor(opened * (0.1 + Math.random() * 0.2));
+        analytics[node.id] = {
+          sent,
+          opened,
+          clicked,
+          openRate: (opened / sent * 100).toFixed(1) + '%',
+          clickRate: (clicked / opened * 100).toFixed(1) + '%',
+        };
+      } else if (node.data.type === 'Logic') {
+        const total = Math.floor(Math.random() * 3000) + 500;
+        const truePath = Math.floor(total * (0.4 + Math.random() * 0.4));
+        analytics[node.id] = {
+          total,
+          truePath,
+          falsePath: total - truePath,
+        };
+      } else {
+        analytics[node.id] = {
+          processed: Math.floor(Math.random() * 2000) + 100,
+        };
+      }
+    });
+
+    res.json(analytics);
+  });
+
   // Workflow Templates
   app.get("/api/workflow-templates", async (req, res) => {
     const templates = await prisma.workflowTemplate.findMany({

@@ -174,6 +174,11 @@ export const api = {
     return res.json();
   },
 
+  async getFlowAnalytics(id: string): Promise<any> {
+    const res = await fetch(`/api/flows/${id}/analytics`);
+    return res.json();
+  },
+
   async getDeliverabilityAnalytics(): Promise<any> {
     const res = await fetch('/api/analytics/deliverability');
     return res.json();

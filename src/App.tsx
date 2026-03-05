@@ -4759,9 +4759,11 @@ const iconMap: Record<string, any> = {
 const CustomNode = ({ data, selected }: any) => {
   if (!data) return null;
   const Icon = typeof data.icon === 'string' ? (iconMap[data.icon] || Zap) : (data.icon || Zap);
+  const stats = data.stats;
+
   return (
     <div className={cn(
-      "bg-bg border p-4 shadow-sm min-w-[180px] transition-all",
+      "bg-bg border p-4 shadow-sm min-w-[200px] transition-all",
       selected ? "border-burgundy ring-1 ring-burgundy/20" : "border-ink/10"
     )}>
       <Handle type="target" position={Position.Top} className="w-2 h-2 bg-burgundy border-none" />
@@ -4769,11 +4771,53 @@ const CustomNode = ({ data, selected }: any) => {
         <div className={cn("p-2", data.color || "bg-ink/5 text-ink")}>
           <Icon size={16} />
         </div>
-        <div>
+        <div className="flex-1">
           <p className="text-[8px] font-black uppercase tracking-widest text-ink/40">{data.type || 'Node'}</p>
           <p className="text-xs font-bold font-serif">{data.label || 'Untitled'}</p>
         </div>
       </div>
+
+      {stats && (
+        <div className="mt-4 pt-3 border-t border-border-hairline grid grid-cols-2 gap-2">
+          {data.type === 'Trigger' && (
+            <div className="col-span-2">
+              <p className="text-[7px] font-black uppercase text-ink/40">Total Entries</p>
+              <p className="text-sm font-serif font-bold text-ink">{stats.entries?.toLocaleString()}</p>
+            </div>
+          )}
+          {data.type === 'Action' && data.label === 'Send Email' && (
+            <>
+              <div>
+                <p className="text-[7px] font-black uppercase text-ink/40">Open Rate</p>
+                <p className="text-xs font-serif font-bold text-status-success">{stats.openRate}</p>
+              </div>
+              <div>
+                <p className="text-[7px] font-black uppercase text-ink/40">Click Rate</p>
+                <p className="text-xs font-serif font-bold text-burgundy">{stats.clickRate}</p>
+              </div>
+            </>
+          )}
+          {data.type === 'Logic' && (
+            <>
+              <div>
+                <p className="text-[7px] font-black uppercase text-ink/40">True</p>
+                <p className="text-xs font-serif font-bold text-status-success">{stats.truePath?.toLocaleString()}</p>
+              </div>
+              <div>
+                <p className="text-[7px] font-black uppercase text-ink/40">False</p>
+                <p className="text-xs font-serif font-bold text-burgundy">{stats.falsePath?.toLocaleString()}</p>
+              </div>
+            </>
+          )}
+          {data.type === 'Action' && data.label !== 'Send Email' && (
+            <div className="col-span-2">
+              <p className="text-[7px] font-black uppercase text-ink/40">Processed</p>
+              <p className="text-sm font-serif font-bold text-ink">{stats.processed?.toLocaleString()}</p>
+            </div>
+          )}
+        </div>
+      )}
+
       <Handle type="source" position={Position.Bottom} className="w-2 h-2 bg-burgundy border-none" />
     </div>
   );
@@ -4798,12 +4842,33 @@ const Automations = () => {
   // React Flow state
   const [nodes, setNodes, onNodesChange] = useNodesState([]);
   const [edges, setEdges, onEdgesChange] = useEdgesState([]);
+  const [isAnalyticsLoading, setIsAnalyticsLoading] = useState(false);
 
   useEffect(() => {
     api.getFlows().then(setFlows);
     api.getEvents().then(setEvents);
     api.getWorkflowTemplates().then(setTemplates);
   }, []);
+
+  const loadAnalytics = async (flowId: string) => {
+    setIsAnalyticsLoading(true);
+    try {
+      const analytics = await api.getFlowAnalytics(flowId);
+      setNodes((nds) => 
+        nds.map((node) => ({
+          ...node,
+          data: {
+            ...node.data,
+            stats: analytics[node.id] || null
+          }
+        }))
+      );
+    } catch (error) {
+      console.error("Failed to load flow analytics", error);
+    } finally {
+      setIsAnalyticsLoading(false);
+    }
+  };
 
   const onConnect = useCallback(
     (params: Connection) => setEdges((eds) => addEdge(params, eds)),
@@ -4838,8 +4903,14 @@ const Automations = () => {
   const openFlow = (flow: Flow) => {
     setActiveFlow(flow);
     try {
-      setNodes(flow.nodes ? JSON.parse(flow.nodes) : []);
+      const parsedNodes = flow.nodes ? JSON.parse(flow.nodes) : [];
+      setNodes(parsedNodes);
       setEdges(flow.edges ? JSON.parse(flow.edges) : []);
+      
+      // If the flow is active, load analytics
+      if (flow.status === 'ACTIVE') {
+        loadAnalytics(flow.id);
+      }
     } catch (e) {
       console.error("Failed to parse flow nodes/edges", e);
       setNodes([]);
@@ -4862,7 +4933,7 @@ const Automations = () => {
       id: `node-${Date.now()}`,
       type: 'custom',
       position: { x: Math.random() * 400, y: Math.random() * 400 },
-      data: { label, type, icon: iconName, color },
+      data: { label, type, icon: iconName, color, stats: null },
     };
     setNodes((nds) => nds.concat(newNode));
   };
@@ -4881,8 +4952,28 @@ const Automations = () => {
             </div>
           </div>
           <div className="flex gap-4">
+            {activeFlow.status === 'ACTIVE' && (
+              <button 
+                onClick={() => loadAnalytics(activeFlow.id)} 
+                disabled={isAnalyticsLoading}
+                className="btn-secondary flex items-center gap-2"
+              >
+                <RefreshCw size={14} className={cn(isAnalyticsLoading && "animate-spin")} />
+                Refresh Stats
+              </button>
+            )}
             <button onClick={saveFlow} className="btn-secondary">Save Changes</button>
-            <button className="btn-primary">Activate Flow</button>
+            <button 
+              onClick={async () => {
+                const updated = await api.updateFlow(activeFlow.id, { status: 'ACTIVE' });
+                setActiveFlow(updated);
+                setFlows(flows.map(f => f.id === updated.id ? updated : f));
+                loadAnalytics(updated.id);
+              }}
+              className="btn-primary"
+            >
+              Activate Flow
+            </button>
           </div>
         </div>
         
