@@ -5454,6 +5454,7 @@ const Automations = () => {
                       <button onClick={() => addNode('Trigger', 'On Signup', 'Zap', 'bg-burgundy/10 text-burgundy')} className="p-2 border border-border-hairline hover:border-burgundy text-[9px] font-bold uppercase text-left">Signup</button>
                       <button onClick={() => addNode('Trigger', 'Webhook', 'Globe', 'bg-burgundy/10 text-burgundy')} className="p-2 border border-border-hairline hover:border-burgundy text-[9px] font-bold uppercase text-left">Webhook</button>
                       <button onClick={() => addNode('Trigger', 'Custom Event', 'Sparkles', 'bg-burgundy/10 text-burgundy')} className="p-2 border border-border-hairline hover:border-burgundy text-[9px] font-bold uppercase text-left">Event</button>
+                      <button onClick={() => addNode('Trigger', 'Scheduled', 'Clock', 'bg-burgundy/10 text-burgundy')} className="p-2 border border-border-hairline hover:border-burgundy text-[9px] font-bold uppercase text-left">Scheduled</button>
                     </div>
                   </div>
 
@@ -5773,33 +5774,99 @@ const Automations = () => {
                     </div>
                   )}
 
+                  {selectedNode.data.label === 'Scheduled' && (
+                    <div className="space-y-4">
+                      <p className="text-[10px] font-black uppercase tracking-widest text-ink/40">Schedule Settings</p>
+                      <div className="space-y-2">
+                        <label className="text-[9px] font-bold uppercase">Schedule Type</label>
+                        <select 
+                          className="w-full bg-bg border border-border-hairline p-2 text-xs"
+                          value={selectedNode.data.config?.scheduleType || 'once'}
+                          onChange={(e) => updateNodeConfig(selectedNode.id, { scheduleType: e.target.value })}
+                        >
+                          <option value="once">One-time</option>
+                          <option value="recurring">Recurring</option>
+                        </select>
+                      </div>
+                      {selectedNode.data.config?.scheduleType === 'once' ? (
+                        <div className="space-y-2">
+                          <label className="text-[9px] font-bold uppercase">Date & Time</label>
+                          <input 
+                            type="datetime-local"
+                            className="w-full bg-bg border border-border-hairline p-2 text-xs"
+                            value={selectedNode.data.config?.scheduledAt || ''}
+                            onChange={(e) => updateNodeConfig(selectedNode.id, { scheduledAt: e.target.value })}
+                          />
+                        </div>
+                      ) : (
+                        <div className="space-y-2">
+                          <label className="text-[9px] font-bold uppercase">Frequency</label>
+                          <select 
+                            className="w-full bg-bg border border-border-hairline p-2 text-xs"
+                            value={selectedNode.data.config?.frequency || 'daily'}
+                            onChange={(e) => updateNodeConfig(selectedNode.id, { frequency: e.target.value })}
+                          >
+                            <option value="hourly">Hourly</option>
+                            <option value="daily">Daily</option>
+                            <option value="weekly">Weekly</option>
+                            <option value="monthly">Monthly</option>
+                          </select>
+                        </div>
+                      )}
+                    </div>
+                  )}
+
                   {selectedNode.data.label === 'Wait' && (
                     <div className="space-y-4">
                       <p className="text-[10px] font-black uppercase tracking-widest text-ink/40">Delay Settings</p>
-                      <div className="grid grid-cols-2 gap-4">
+                      <div className="space-y-2">
+                        <label className="text-[9px] font-bold uppercase">Wait Type</label>
+                        <select 
+                          className="w-full bg-bg border border-border-hairline p-2 text-xs"
+                          value={selectedNode.data.config?.waitType || 'duration'}
+                          onChange={(e) => updateNodeConfig(selectedNode.id, { waitType: e.target.value })}
+                        >
+                          <option value="duration">Specific Duration</option>
+                          <option value="until">Until Specific Date</option>
+                        </select>
+                      </div>
+                      
+                      {selectedNode.data.config?.waitType === 'until' ? (
                         <div className="space-y-2">
-                          <label className="text-[9px] font-bold uppercase">Duration</label>
+                          <label className="text-[9px] font-bold uppercase">Wait Until</label>
                           <input 
-                            type="number"
+                            type="datetime-local"
                             className="w-full bg-bg border border-border-hairline p-2 text-xs"
-                            value={selectedNode.data.config?.duration || 1}
-                            onChange={(e) => updateNodeConfig(selectedNode.id, { duration: parseInt(e.target.value) })}
+                            value={selectedNode.data.config?.waitUntil || ''}
+                            onChange={(e) => updateNodeConfig(selectedNode.id, { waitUntil: e.target.value })}
                           />
                         </div>
-                        <div className="space-y-2">
-                          <label className="text-[9px] font-bold uppercase">Unit</label>
-                          <select 
-                            className="w-full bg-bg border border-border-hairline p-2 text-xs"
-                            value={selectedNode.data.config?.unit || 'days'}
-                            onChange={(e) => updateNodeConfig(selectedNode.id, { unit: e.target.value })}
-                          >
-                            <option value="minutes">Minutes</option>
-                            <option value="hours">Hours</option>
-                            <option value="days">Days</option>
-                            <option value="weeks">Weeks</option>
-                          </select>
+                      ) : (
+                        <div className="grid grid-cols-2 gap-4">
+                          <div className="space-y-2">
+                            <label className="text-[9px] font-bold uppercase">Duration</label>
+                            <input 
+                              type="number"
+                              className="w-full bg-bg border border-border-hairline p-2 text-xs"
+                              value={selectedNode.data.config?.duration || 1}
+                              onChange={(e) => updateNodeConfig(selectedNode.id, { duration: parseInt(e.target.value) })}
+                            />
+                          </div>
+                          <div className="space-y-2">
+                            <label className="text-[9px] font-bold uppercase">Unit</label>
+                            <select 
+                              className="w-full bg-bg border border-border-hairline p-2 text-xs"
+                              value={selectedNode.data.config?.unit || 'days'}
+                              onChange={(e) => updateNodeConfig(selectedNode.id, { unit: e.target.value })}
+                            >
+                              <option value="minutes">Minutes</option>
+                              <option value="hours">Hours</option>
+                              <option value="days">Days</option>
+                              <option value="weeks">Weeks</option>
+                            </select>
+                          </div>
                         </div>
-                      </div>
+                      )}
                     </div>
                   )}
 
