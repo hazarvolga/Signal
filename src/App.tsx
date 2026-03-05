@@ -2198,7 +2198,7 @@ const Campaigns = () => {
                 <div className="space-y-2">
                   <label className="metric-label">Editorial Tone</label>
                   <div className="grid grid-cols-3 gap-2">
-                    {['Professional', 'Casual', 'Urgent', 'Inspirational', 'Authoritative', 'Minimalist'].map(tone => (
+                    {['Professional', 'Casual', 'Urgent', 'Inspirational', 'Authoritative', 'Minimalist', 'Analytical', 'Empathetic', 'Sophisticated'].map(tone => (
                       <button 
                         key={tone}
                         type="button"
