@@ -50,10 +50,16 @@ import {
   Menu,
   X,
   Play,
-  GitBranch
+  GitBranch,
+  Undo,
+  Redo,
+  LayoutTemplate,
+  StepForward,
+  RotateCcw
 } from 'lucide-react';
 import { motion, AnimatePresence } from 'motion/react';
 import { GoogleGenAI } from "@google/genai";
+import * as dagre from 'dagre';
 import { api } from './services/api';
 import { geminiService } from './services/geminiService';
 import { User, Contact, Template, Campaign, DashboardStats, Segment, CustomFieldDefinition, Flow, Event, Tag } from './types';
@@ -4764,6 +4770,7 @@ const CustomNode = ({ data, selected }: any) => {
   const stats = data.stats;
   const isHeatmapOn = data.isHeatmapOn;
   const errors = data.errors;
+  const isSimulationStep = data.isSimulationStep;
   const dropOff = stats && stats.entries > 0 ? ((stats.entries - (stats.processed || 0)) / stats.entries) * 100 : 0;
   const isBottleneck = isHeatmapOn && dropOff > 30;
 
@@ -4772,7 +4779,8 @@ const CustomNode = ({ data, selected }: any) => {
       "bg-bg border p-4 shadow-sm min-w-[200px] transition-all relative",
       selected ? "border-burgundy ring-1 ring-burgundy/20" : "border-ink/10",
       isBottleneck ? "ring-2 ring-burgundy animate-pulse border-burgundy shadow-lg shadow-burgundy/20" : "",
-      errors && errors.length > 0 ? "border-burgundy ring-1 ring-burgundy/50" : ""
+      errors && errors.length > 0 ? "border-burgundy ring-1 ring-burgundy/50" : "",
+      isSimulationStep ? "ring-4 ring-brass border-brass shadow-xl scale-105 z-50" : ""
     )}>
       <Handle type="target" position={Position.Top} className="w-2 h-2 bg-burgundy border-none" />
       
@@ -4841,6 +4849,25 @@ const CustomNode = ({ data, selected }: any) => {
         </div>
       ) : (
         <Handle type="source" position={Position.Bottom} className="w-2 h-2 bg-burgundy border-none" />
+      )}
+
+      {isHeatmapOn && stats && (
+        <div className="mt-2 space-y-1">
+          <div className="flex justify-between items-center text-[7px] font-black uppercase">
+            <span className="text-ink/40">Drop-off Rate</span>
+            <span className={cn(dropOff > 30 ? "text-burgundy" : "text-ink/60")}>{Math.round(dropOff)}%</span>
+          </div>
+          <div className="h-1 bg-ink/5 rounded-full overflow-hidden">
+            <motion.div 
+              initial={{ width: 0 }}
+              animate={{ width: `${dropOff}%` }}
+              className={cn(
+                "h-full transition-colors",
+                dropOff > 50 ? "bg-burgundy" : dropOff > 20 ? "bg-brass" : "bg-status-success"
+              )}
+            />
+          </div>
+        </div>
       )}
 
       {stats && (
@@ -4913,6 +4940,7 @@ const Automations = () => {
   const [availableTags, setAvailableTags] = useState<Tag[]>([]);
   const [validationErrors, setValidationErrors] = useState<string[]>([]);
   const [showHeatmap, setShowHeatmap] = useState(false);
+  const [showFunnel, setShowFunnel] = useState(false);
   const [showSimulation, setShowSimulation] = useState(false);
   const [simulatedContact, setSimulatedContact] = useState({
     email: 'test@example.com',
@@ -4921,13 +4949,93 @@ const Automations = () => {
     lastOpen: null as string | null,
   });
   const [simulationPath, setSimulationPath] = useState<string[]>([]);
+  const [simulationStep, setSimulationStep] = useState(-1);
+  const [history, setHistory] = useState<{ nodes: Node[]; edges: Edge[] }[]>([]);
+  const [historyIndex, setHistoryIndex] = useState(-1);
+
+  // Undo/Redo Logic
+  const saveToHistory = useCallback((currentNodes: Node[], currentEdges: Edge[]) => {
+    setHistory(prev => {
+      const newHistory = prev.slice(0, historyIndex + 1);
+      return [...newHistory, { nodes: currentNodes, edges: currentEdges }].slice(-20); // Keep last 20
+    });
+    setHistoryIndex(prev => prev + 1);
+  }, [historyIndex]);
+
+  const undo = () => {
+    if (historyIndex > 0) {
+      const prevState = history[historyIndex - 1];
+      setNodes(prevState.nodes);
+      setEdges(prevState.edges);
+      setHistoryIndex(historyIndex - 1);
+    }
+  };
+
+  const redo = () => {
+    if (historyIndex < history.length - 1) {
+      const nextState = history[historyIndex + 1];
+      setNodes(nextState.nodes);
+      setEdges(nextState.edges);
+      setHistoryIndex(historyIndex + 1);
+    }
+  };
+
+  // Auto-layout Logic
+  const onLayout = useCallback(() => {
+    const g = new dagre.graphlib.Graph();
+    g.setGraph({ rankdir: 'TB', nodesep: 100, ranksep: 100 });
+    g.setDefaultEdgeLabel(() => ({}));
+
+    nodes.forEach((node) => {
+      g.setNode(node.id, { width: 200, height: 100 });
+    });
+
+    edges.forEach((edge) => {
+      g.setEdge(edge.source, edge.target);
+    });
+
+    dagre.layout(g);
+
+    const layoutedNodes = nodes.map((node) => {
+      const nodeWithPosition = g.node(node.id);
+      return {
+        ...node,
+        position: {
+          x: nodeWithPosition.x - 100,
+          y: nodeWithPosition.y - 50,
+        },
+      };
+    });
+
+    setNodes(layoutedNodes);
+    saveToHistory(layoutedNodes, edges);
+  }, [nodes, edges, setNodes, saveToHistory]);
+
+  useEffect(() => {
+    if (activeFlow && historyIndex === -1) {
+      try {
+        const parsedNodes = activeFlow.nodes ? JSON.parse(activeFlow.nodes) : [];
+        const parsedEdges = activeFlow.edges ? JSON.parse(activeFlow.edges) : [];
+        setHistory([{ nodes: parsedNodes, edges: parsedEdges }]);
+        setHistoryIndex(0);
+      } catch (e) {
+        console.error("Failed to initialize history", e);
+        setHistory([{ nodes: [], edges: [] }]);
+        setHistoryIndex(0);
+      }
+    }
+  }, [activeFlow, historyIndex]);
 
   useEffect(() => {
     setNodes(nds => nds.map(node => ({
       ...node,
-      data: { ...node.data, isHeatmapOn: showHeatmap }
+      data: { 
+        ...node.data, 
+        isHeatmapOn: showHeatmap,
+        isSimulationStep: simulationPath[simulationStep] === node.id
+      }
     })));
-  }, [showHeatmap, setNodes]);
+  }, [showHeatmap, simulationPath, simulationStep, setNodes]);
 
   useEffect(() => {
     api.getFlows().then(setFlows);
@@ -4948,12 +5056,32 @@ const Automations = () => {
     setIsAnalyticsLoading(true);
     try {
       const analytics = await api.getFlowAnalytics(flowId);
+      
+      // Inject mock data for demo purposes if analytics is empty
+      const mockAnalytics: Record<string, any> = { ...analytics };
+      if (Object.keys(mockAnalytics).length === 0) {
+        nodes.forEach((node, idx) => {
+          const baseEntries = 10000 - (idx * 1500);
+          const entries = Math.max(100, baseEntries + Math.floor(Math.random() * 500));
+          const processed = Math.floor(entries * (0.6 + Math.random() * 0.35));
+          
+          mockAnalytics[node.id] = {
+            entries,
+            processed,
+            openRate: node.data.label === 'Send Email' ? `${Math.floor(20 + Math.random() * 40)}%` : undefined,
+            clickRate: node.data.label === 'Send Email' ? `${Math.floor(5 + Math.random() * 15)}%` : undefined,
+            truePath: node.data.label === 'If/Else' ? Math.floor(processed * 0.6) : undefined,
+            falsePath: node.data.label === 'If/Else' ? Math.floor(processed * 0.4) : undefined,
+          };
+        });
+      }
+
       setNodes((nds) => 
         nds.map((node) => ({
           ...node,
           data: {
             ...node.data,
-            stats: analytics[node.id] || null
+            stats: mockAnalytics[node.id] || null
           }
         }))
       );
@@ -5030,9 +5158,27 @@ const Automations = () => {
   };
 
   const onConnect = useCallback(
-    (params: Connection) => setEdges((eds) => addEdge(params, eds)),
-    [setEdges]
+    (params: Connection) => {
+      const newEdges = addEdge(params, edges);
+      setEdges(newEdges);
+      saveToHistory(nodes, newEdges);
+    },
+    [setEdges, edges, nodes, saveToHistory]
   );
+
+  const onNodeDragStop = useCallback(() => {
+    saveToHistory(nodes, edges);
+  }, [nodes, edges, saveToHistory]);
+
+  const onNodesDelete = useCallback((deleted: Node[]) => {
+    const newNodes = nodes.filter(n => !deleted.find(d => d.id === n.id));
+    saveToHistory(newNodes, edges);
+  }, [nodes, edges, saveToHistory]);
+
+  const onEdgesDelete = useCallback((deleted: Edge[]) => {
+    const newEdges = edges.filter(e => !deleted.find(d => d.id === e.id));
+    saveToHistory(nodes, newEdges);
+  }, [nodes, edges, saveToHistory]);
 
   const handleCreateFlow = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -5094,14 +5240,16 @@ const Automations = () => {
       position: { x: Math.random() * 400, y: Math.random() * 400 },
       data: { label, type, icon: iconName, color, stats: null, config: {} },
     };
-    setNodes((nds) => nds.concat(newNode));
+    const newNodes = nodes.concat(newNode);
+    setNodes(newNodes);
+    saveToHistory(newNodes, edges);
   };
 
   const updateNodeConfig = (nodeId: string, config: any) => {
     setNodes((nds) =>
       nds.map((node) => {
         if (node.id === nodeId) {
-          return {
+          const updatedNode = {
             ...node,
             data: {
               ...node.data,
@@ -5111,10 +5259,23 @@ const Automations = () => {
               },
             },
           };
+          return updatedNode;
         }
         return node;
       })
     );
+    
+    // Save to history after state update
+    setTimeout(() => {
+      setNodes(nds => {
+        setEdges(eds => {
+          saveToHistory(nds, eds);
+          return eds;
+        });
+        return nds;
+      });
+    }, 0);
+
     // Also update selectedNode to reflect changes in UI
     if (selectedNode?.id === nodeId) {
       setSelectedNode((prev: any) => ({
@@ -5144,6 +5305,31 @@ const Automations = () => {
             </div>
           </div>
           <div className="flex gap-4">
+            <div className="flex items-center gap-1 mr-4 border-r border-border-hairline pr-4">
+              <button 
+                onClick={undo} 
+                disabled={historyIndex <= 0}
+                className="p-2 text-ink/40 hover:text-ink disabled:opacity-20 transition-colors"
+                title="Undo"
+              >
+                <Undo size={16} />
+              </button>
+              <button 
+                onClick={redo} 
+                disabled={historyIndex >= history.length - 1}
+                className="p-2 text-ink/40 hover:text-ink disabled:opacity-20 transition-colors"
+                title="Redo"
+              >
+                <Redo size={16} />
+              </button>
+              <button 
+                onClick={onLayout}
+                className="p-2 text-ink/40 hover:text-brass transition-colors"
+                title="Auto-layout"
+              >
+                <LayoutTemplate size={16} />
+              </button>
+            </div>
             <button 
               onClick={() => setShowHeatmap(!showHeatmap)}
               className={cn(
@@ -5153,6 +5339,16 @@ const Automations = () => {
             >
               <Zap size={14} />
               {showHeatmap ? "Heatmap On" : "Heatmap Off"}
+            </button>
+            <button 
+              onClick={() => setShowFunnel(!showFunnel)}
+              className={cn(
+                "flex items-center gap-2 px-3 py-1 border text-[10px] font-bold uppercase transition-colors",
+                showFunnel ? "bg-ink text-white border-ink" : "bg-white text-ink border-border-hairline hover:border-ink"
+              )}
+            >
+              <BarChart3 size={14} />
+              {showFunnel ? "Close Funnel" : "Funnel View"}
             </button>
             <button 
               onClick={() => setShowSimulation(true)}
@@ -5223,7 +5419,8 @@ const Automations = () => {
                 ...n,
                 data: { 
                   ...n.data, 
-                  isSimulated: simulationPath.includes(n.id)
+                  isSimulated: simulationPath.includes(n.id),
+                  isSimulationStep: simulationPath[simulationStep] === n.id
                 }
               }))}
               edges={edges.map(e => ({
@@ -5233,6 +5430,9 @@ const Automations = () => {
               onNodesChange={onNodesChange}
               onEdgesChange={onEdgesChange}
               onConnect={onConnect}
+              onNodeDragStop={onNodeDragStop}
+              onNodesDelete={onNodesDelete}
+              onEdgesDelete={onEdgesDelete}
               onNodeClick={(_, node) => setSelectedNode(node)}
               onPaneClick={() => setSelectedNode(null)}
               nodeTypes={automationNodeTypes}
@@ -5281,7 +5481,107 @@ const Automations = () => {
 
           {/* Node Configuration Panel */}
           <AnimatePresence>
-            {showSimulation && (
+            {showFunnel && (
+        <div className="fixed inset-0 bg-ink/80 backdrop-blur-sm z-[100] flex items-center justify-center p-4">
+          <motion.div 
+            initial={{ opacity: 0, y: 20 }}
+            animate={{ opacity: 1, y: 0 }}
+            className="bg-white border-2 border-ink w-full max-w-4xl p-8 space-y-8"
+          >
+            <div className="flex justify-between items-center border-b border-border-hairline pb-4">
+              <div className="flex items-center gap-3">
+                <BarChart3 className="text-burgundy" size={24} />
+                <h3 className="text-2xl font-serif font-black uppercase italic">Journey Funnel Analysis</h3>
+              </div>
+              <button onClick={() => setShowFunnel(false)} className="hover:opacity-50"><X size={24} /></button>
+            </div>
+
+            <div className="grid grid-cols-1 lg:grid-cols-3 gap-8">
+              <div className="lg:col-span-2 space-y-6">
+                <p className="text-[10px] font-black uppercase tracking-widest text-ink/40">Step-by-Step Conversion</p>
+                <div className="space-y-4">
+                  {nodes
+                    .filter(n => n.data.stats)
+                    .sort((a, b) => (b.data.stats.entries || 0) - (a.data.stats.entries || 0))
+                    .slice(0, 6)
+                    .map((node, idx, arr) => {
+                      const stats = node.data.stats;
+                      const dropOff = stats.entries > 0 ? ((stats.entries - (stats.processed || 0)) / stats.entries) * 100 : 0;
+                      const width = (stats.entries / arr[0].data.stats.entries) * 100;
+
+                      return (
+                        <div key={node.id} className="space-y-1">
+                          <div className="flex justify-between items-end">
+                            <div className="flex items-center gap-2">
+                              <span className="text-[10px] font-mono text-ink/40">0{idx + 1}</span>
+                              <span className="text-xs font-bold uppercase">{node.data.label}</span>
+                            </div>
+                            <div className="text-right">
+                              <span className="text-xs font-serif font-bold">{stats.entries.toLocaleString()}</span>
+                              <span className="text-[8px] font-black uppercase text-ink/40 ml-2">Entries</span>
+                            </div>
+                          </div>
+                          <div className="relative h-6 bg-ink/5 overflow-hidden">
+                            <motion.div 
+                              initial={{ width: 0 }}
+                              animate={{ width: `${width}%` }}
+                              className="h-full bg-brass/20 border-r-2 border-brass"
+                            />
+                            {idx > 0 && (
+                              <div className="absolute inset-y-0 left-0 flex items-center px-2">
+                                <span className="text-[8px] font-black uppercase text-burgundy">
+                                  -{Math.round(dropOff)}% Drop
+                                </span>
+                              </div>
+                            )}
+                          </div>
+                        </div>
+                      );
+                    })}
+                </div>
+              </div>
+
+              <div className="space-y-6">
+                <p className="text-[10px] font-black uppercase tracking-widest text-ink/40">Critical Bottlenecks</p>
+                <div className="space-y-4">
+                  {nodes
+                    .filter(n => n.data.stats)
+                    .map(n => ({
+                      id: n.id,
+                      label: n.data.label,
+                      dropOff: n.data.stats.entries > 0 ? ((n.data.stats.entries - (n.data.stats.processed || 0)) / n.data.stats.entries) * 100 : 0
+                    }))
+                    .sort((a, b) => b.dropOff - a.dropOff)
+                    .filter(n => n.dropOff > 20)
+                    .slice(0, 4)
+                    .map((b, idx) => (
+                      <div key={b.id} className="p-4 border border-burgundy/20 bg-burgundy/5 space-y-2">
+                        <div className="flex justify-between items-start">
+                          <span className="text-[9px] font-black uppercase text-burgundy">Priority 0{idx + 1}</span>
+                          <AlertTriangle size={14} className="text-burgundy" />
+                        </div>
+                        <p className="text-sm font-serif font-bold">{b.label}</p>
+                        <div className="flex justify-between items-center">
+                          <span className="text-[8px] font-black uppercase text-ink/40">Drop-off Rate</span>
+                          <span className="text-xs font-bold text-burgundy">{Math.round(b.dropOff)}%</span>
+                        </div>
+                      </div>
+                    ))}
+                  
+                  {nodes.filter(n => n.data.stats && ((n.data.stats.entries - (n.data.stats.processed || 0)) / n.data.stats.entries) * 100 > 20).length === 0 && (
+                    <div className="p-8 border border-dashed border-border-hairline text-center">
+                      <CheckCircle2 size={24} className="mx-auto text-status-success mb-2 opacity-20" />
+                      <p className="text-[10px] font-black uppercase tracking-widest text-ink/20">No major bottlenecks detected</p>
+                    </div>
+                  )}
+                </div>
+              </div>
+            </div>
+          </motion.div>
+        </div>
+      )}
+
+      {showSimulation && (
         <div className="fixed inset-0 bg-ink/80 backdrop-blur-sm z-[100] flex items-center justify-center p-4">
           <motion.div 
             initial={{ opacity: 0, scale: 0.95 }}
@@ -5318,70 +5618,98 @@ const Automations = () => {
                 </div>
               </div>
 
-              <button 
-                onClick={() => {
-                  const path: string[] = [];
-                  let currentNode = nodes.find(n => n.data.type === 'Trigger');
-                  
-                  if (currentNode) {
-                    path.push(currentNode.id);
+              <div className="flex gap-2">
+                <button 
+                  onClick={() => {
+                    const path: string[] = [];
+                    let currentNode = nodes.find(n => n.data.type === 'Trigger');
                     
-                    for (let i = 0; i < 20; i++) {
-                      const outgoingEdges = edges.filter(e => e.source === currentNode?.id);
-                      if (outgoingEdges.length === 0) break;
+                    if (currentNode) {
+                      path.push(currentNode.id);
+                      
+                      for (let i = 0; i < 20; i++) {
+                        const outgoingEdges = edges.filter(e => e.source === currentNode?.id);
+                        if (outgoingEdges.length === 0) break;
 
-                      if (currentNode?.data.label === 'If/Else') {
-                        const config = currentNode.data.config;
-                        let result = false;
-                        if (config?.condition === 'tag_exists') {
-                          result = simulatedContact.tags.includes(config.tagId);
-                        } else if (config?.condition === 'has_purchased') {
-                          result = simulatedContact.purchases > 0;
-                        }
-                        
-                        const targetEdge = outgoingEdges.find(e => e.sourceHandle === (result ? 'true' : 'false'));
-                        if (targetEdge) {
-                          currentNode = nodes.find(n => n.id === targetEdge.target);
+                        if (currentNode?.data.label === 'If/Else') {
+                          const config = currentNode.data.config;
+                          let result = false;
+                          if (config?.condition === 'tag_exists') {
+                            result = simulatedContact.tags.includes(config.tagId);
+                          } else if (config?.condition === 'has_purchased') {
+                            result = simulatedContact.purchases > 0;
+                          }
+                          
+                          const targetEdge = outgoingEdges.find(e => e.sourceHandle === (result ? 'true' : 'false'));
+                          if (targetEdge) {
+                            currentNode = nodes.find(n => n.id === targetEdge.target);
+                          } else {
+                            break;
+                          }
+                        } else if (currentNode?.data.label === 'A/B Test') {
+                          const result = Math.random() * 100 < (currentNode.data.config?.splitPercentage || 50) ? 'a' : 'b';
+                          const targetEdge = outgoingEdges.find(e => e.sourceHandle === result);
+                          if (targetEdge) {
+                            currentNode = nodes.find(n => n.id === targetEdge.target);
+                          } else {
+                            break;
+                          }
+                        } else if (currentNode?.data.label === 'Multi-path Split') {
+                          const paths = currentNode.data.config?.paths || ['Path 1', 'Path 2'];
+                          const randomIdx = Math.floor(Math.random() * paths.length);
+                          const targetEdge = outgoingEdges.find(e => e.sourceHandle === `path-${randomIdx}`);
+                          if (targetEdge) {
+                            currentNode = nodes.find(n => n.id === targetEdge.target);
+                          } else {
+                            currentNode = nodes.find(n => n.id === outgoingEdges[0].target);
+                          }
                         } else {
-                          break;
-                        }
-                      } else if (currentNode?.data.label === 'A/B Test') {
-                        const result = Math.random() * 100 < (currentNode.data.config?.splitPercentage || 50) ? 'a' : 'b';
-                        const targetEdge = outgoingEdges.find(e => e.sourceHandle === result);
-                        if (targetEdge) {
-                          currentNode = nodes.find(n => n.id === targetEdge.target);
-                        } else {
-                          break;
-                        }
-                      } else if (currentNode?.data.label === 'Multi-path Split') {
-                        // Randomly pick one of the paths for simulation
-                        const paths = currentNode.data.config?.paths || ['Path 1', 'Path 2'];
-                        const randomIdx = Math.floor(Math.random() * paths.length);
-                        const targetEdge = outgoingEdges.find(e => e.sourceHandle === `path-${randomIdx}`);
-                        if (targetEdge) {
-                          currentNode = nodes.find(n => n.id === targetEdge.target);
-                        } else {
-                          // If no edge for that path, try the first available edge
                           currentNode = nodes.find(n => n.id === outgoingEdges[0].target);
                         }
-                      } else {
-                        currentNode = nodes.find(n => n.id === outgoingEdges[0].target);
-                      }
 
-                      if (currentNode) {
-                        path.push(currentNode.id);
-                      } else {
-                        break;
+                        if (currentNode) {
+                          path.push(currentNode.id);
+                        } else {
+                          break;
+                        }
                       }
                     }
-                  }
-                  setSimulationPath(path);
-                  setShowSimulation(false);
-                }}
-                className="w-full py-3 bg-burgundy text-white text-xs font-black uppercase tracking-widest hover:bg-burgundy/90 transition-colors"
-              >
-                Run Simulation
-              </button>
+                    setSimulationPath(path);
+                    setSimulationStep(0);
+                  }}
+                  className="flex-1 py-3 bg-burgundy text-white text-xs font-black uppercase tracking-widest hover:bg-burgundy/90 transition-colors flex items-center justify-center gap-2"
+                >
+                  <Play size={14} />
+                  Start Simulation
+                </button>
+                {simulationPath.length > 0 && (
+                  <button 
+                    onClick={() => {
+                      if (simulationStep < simulationPath.length - 1) {
+                        setSimulationStep(prev => prev + 1);
+                      } else {
+                        setSimulationStep(0);
+                      }
+                    }}
+                    className="p-3 bg-brass text-white hover:bg-brass/90 transition-colors"
+                    title="Next Step"
+                  >
+                    <StepForward size={20} />
+                  </button>
+                )}
+                {simulationPath.length > 0 && (
+                  <button 
+                    onClick={() => {
+                      setSimulationPath([]);
+                      setSimulationStep(-1);
+                    }}
+                    className="p-3 bg-ink text-white hover:bg-ink/90 transition-colors"
+                    title="Reset"
+                  >
+                    <RotateCcw size={20} />
+                  </button>
+                )}
+              </div>
             </div>
           </motion.div>
         </div>
