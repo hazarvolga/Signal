@@ -48,13 +48,15 @@ import {
   Sun,
   Moon,
   Menu,
-  X
+  X,
+  Play,
+  GitBranch
 } from 'lucide-react';
 import { motion, AnimatePresence } from 'motion/react';
 import { GoogleGenAI } from "@google/genai";
 import { api } from './services/api';
 import { geminiService } from './services/geminiService';
-import { User, Contact, Template, Campaign, DashboardStats, Segment, CustomFieldDefinition, Flow, Event } from './types';
+import { User, Contact, Template, Campaign, DashboardStats, Segment, CustomFieldDefinition, Flow, Event, Tag } from './types';
 import { format } from 'date-fns';
 import { 
   BarChart, 
@@ -4760,13 +4762,35 @@ const CustomNode = ({ data, selected }: any) => {
   if (!data) return null;
   const Icon = typeof data.icon === 'string' ? (iconMap[data.icon] || Zap) : (data.icon || Zap);
   const stats = data.stats;
+  const isHeatmapOn = data.isHeatmapOn;
+  const errors = data.errors;
+  const dropOff = stats && stats.entries > 0 ? ((stats.entries - (stats.processed || 0)) / stats.entries) * 100 : 0;
+  const isBottleneck = isHeatmapOn && dropOff > 30;
 
   return (
     <div className={cn(
-      "bg-bg border p-4 shadow-sm min-w-[200px] transition-all",
-      selected ? "border-burgundy ring-1 ring-burgundy/20" : "border-ink/10"
+      "bg-bg border p-4 shadow-sm min-w-[200px] transition-all relative",
+      selected ? "border-burgundy ring-1 ring-burgundy/20" : "border-ink/10",
+      isBottleneck ? "ring-2 ring-burgundy animate-pulse border-burgundy shadow-lg shadow-burgundy/20" : "",
+      errors && errors.length > 0 ? "border-burgundy ring-1 ring-burgundy/50" : ""
     )}>
       <Handle type="target" position={Position.Top} className="w-2 h-2 bg-burgundy border-none" />
+      
+      {errors && errors.length > 0 && (
+        <div className="absolute -top-3 -right-3 bg-burgundy text-white p-1 rounded-full shadow-lg z-10">
+          <AlertCircle size={12} />
+        </div>
+      )}
+
+      {isBottleneck && (
+        <div className="absolute -top-8 left-0 right-0 flex justify-center">
+          <div className="bg-burgundy text-white text-[8px] font-black uppercase px-2 py-1 rounded-full flex items-center gap-1 shadow-lg">
+            <AlertCircle size={10} />
+            High Drop-off: {Math.round(dropOff)}%
+          </div>
+        </div>
+      )}
+
       <div className="flex items-center gap-3">
         <div className={cn("p-2", data.color || "bg-ink/5 text-ink")}>
           <Icon size={16} />
@@ -4776,6 +4800,48 @@ const CustomNode = ({ data, selected }: any) => {
           <p className="text-xs font-bold font-serif">{data.label || 'Untitled'}</p>
         </div>
       </div>
+
+      {data.label === 'If/Else' ? (
+        <>
+          <Handle type="source" position={Position.Bottom} id="true" className="w-2 h-2 bg-status-success border-none left-1/4" />
+          <Handle type="source" position={Position.Bottom} id="false" className="w-2 h-2 bg-burgundy border-none left-3/4" />
+          <div className="flex justify-between px-2 mt-1">
+            <span className="text-[6px] font-black uppercase text-status-success">True</span>
+            <span className="text-[6px] font-black uppercase text-burgundy">False</span>
+          </div>
+        </>
+      ) : data.label === 'A/B Test' ? (
+        <>
+          <Handle type="source" position={Position.Bottom} id="a" className="w-2 h-2 bg-brass border-none left-1/4" />
+          <Handle type="source" position={Position.Bottom} id="b" className="w-2 h-2 bg-ink border-none left-3/4" />
+          <div className="flex justify-between px-2 mt-1">
+            <span className="text-[6px] font-black uppercase text-brass">Var A</span>
+            <span className="text-[6px] font-black uppercase text-ink">Var B</span>
+          </div>
+        </>
+      ) : data.label === 'Multi-path Split' ? (
+        <div className="relative h-4 mt-1">
+          {(data.config?.paths || ['Path 1', 'Path 2']).map((path: string, idx: number, arr: any[]) => (
+            <React.Fragment key={idx}>
+              <Handle 
+                type="source" 
+                position={Position.Bottom} 
+                id={`path-${idx}`} 
+                className="w-2 h-2 bg-brass border-none" 
+                style={{ left: `${((idx + 1) / (arr.length + 1)) * 100}%` }}
+              />
+              <span 
+                className="absolute text-[5px] font-black uppercase text-brass truncate w-10 text-center"
+                style={{ left: `${((idx + 1) / (arr.length + 1)) * 100}%`, transform: 'translateX(-50%)', bottom: '-8px' }}
+              >
+                {path}
+              </span>
+            </React.Fragment>
+          ))}
+        </div>
+      ) : (
+        <Handle type="source" position={Position.Bottom} className="w-2 h-2 bg-burgundy border-none" />
+      )}
 
       {stats && (
         <div className="mt-4 pt-3 border-t border-border-hairline grid grid-cols-2 gap-2">
@@ -4818,7 +4884,6 @@ const CustomNode = ({ data, selected }: any) => {
         </div>
       )}
 
-      <Handle type="source" position={Position.Bottom} className="w-2 h-2 bg-burgundy border-none" />
     </div>
   );
 };
@@ -4843,11 +4908,40 @@ const Automations = () => {
   const [nodes, setNodes, onNodesChange] = useNodesState([]);
   const [edges, setEdges, onEdgesChange] = useEdgesState([]);
   const [isAnalyticsLoading, setIsAnalyticsLoading] = useState(false);
+  const [selectedNode, setSelectedNode] = useState<Node | null>(null);
+  const [emailTemplates, setEmailTemplates] = useState<Template[]>([]);
+  const [availableTags, setAvailableTags] = useState<Tag[]>([]);
+  const [validationErrors, setValidationErrors] = useState<string[]>([]);
+  const [showHeatmap, setShowHeatmap] = useState(false);
+  const [showSimulation, setShowSimulation] = useState(false);
+  const [simulatedContact, setSimulatedContact] = useState({
+    email: 'test@example.com',
+    tags: ['newsletter'],
+    purchases: 0,
+    lastOpen: null as string | null,
+  });
+  const [simulationPath, setSimulationPath] = useState<string[]>([]);
+
+  useEffect(() => {
+    setNodes(nds => nds.map(node => ({
+      ...node,
+      data: { ...node.data, isHeatmapOn: showHeatmap }
+    })));
+  }, [showHeatmap, setNodes]);
 
   useEffect(() => {
     api.getFlows().then(setFlows);
     api.getEvents().then(setEvents);
     api.getWorkflowTemplates().then(setTemplates);
+    api.getTemplates().then(setEmailTemplates);
+    // Assuming there's a way to get tags, if not we'll mock or use a generic list
+    // For now let's just use some mock tags if api doesn't have it
+    setAvailableTags([
+      { id: '1', name: 'VIP' },
+      { id: '2', name: 'New User' },
+      { id: '3', name: 'Churn Risk' },
+      { id: '4', name: 'Purchased' },
+    ]);
   }, []);
 
   const loadAnalytics = async (flowId: string) => {
@@ -4868,6 +4962,71 @@ const Automations = () => {
     } finally {
       setIsAnalyticsLoading(false);
     }
+  };
+
+  const validateFlow = () => {
+    const errors: string[] = [];
+    const nodeErrors: Record<string, string[]> = {};
+    
+    // Helper to add node error
+    const addNodeError = (nodeId: string, error: string) => {
+      if (!nodeErrors[nodeId]) nodeErrors[nodeId] = [];
+      nodeErrors[nodeId].push(error);
+      errors.push(error);
+    };
+
+    // 1. Check for triggers
+    const triggerNodes = nodes.filter(n => n.data.type === 'Trigger');
+    if (triggerNodes.length === 0) {
+      errors.push("At least one trigger node is required.");
+    }
+
+    // 2. Check for disconnected nodes
+    nodes.forEach(node => {
+      if (node.data.type !== 'Trigger') {
+        const hasIncoming = edges.some(e => e.target === node.id);
+        if (!hasIncoming) {
+          addNodeError(node.id, `Node "${node.data.label}" is not connected to the workflow.`);
+        }
+      }
+      
+      // Check for outgoing (unless it's an end node - though in VJB most nodes should lead somewhere)
+      const hasOutgoing = edges.some(e => e.source === node.id);
+      if (!hasOutgoing && node.data.type !== 'Action') { // Actions can be end nodes
+         // Maybe just a warning for now
+      }
+    });
+
+    // 3. Check for missing configuration
+    nodes.forEach(node => {
+      const config = node.data.config;
+      if (node.data.label === 'Send Email' && !config?.templateId) {
+        addNodeError(node.id, `Email node is missing a template.`);
+      }
+      if (node.data.label === 'Add Tag' && !config?.tagId) {
+        addNodeError(node.id, `Tag node is missing a tag selection.`);
+      }
+      if (node.data.label === 'Wait' && (!config?.duration || config.duration <= 0)) {
+        addNodeError(node.id, `Delay node has an invalid duration.`);
+      }
+      if (node.data.label === 'If/Else' && !node.data.config?.conditionType) {
+        addNodeError(node.id, `Logic node is missing a condition.`);
+      }
+    });
+
+    // Update nodes with error state
+    setNodes((nds) => 
+      nds.map((node) => ({
+        ...node,
+        data: {
+          ...node.data,
+          errors: nodeErrors[node.id] || null
+        }
+      }))
+    );
+
+    setValidationErrors(errors);
+    return errors.length === 0;
   };
 
   const onConnect = useCallback(
@@ -4933,9 +5092,42 @@ const Automations = () => {
       id: `node-${Date.now()}`,
       type: 'custom',
       position: { x: Math.random() * 400, y: Math.random() * 400 },
-      data: { label, type, icon: iconName, color, stats: null },
+      data: { label, type, icon: iconName, color, stats: null, config: {} },
     };
     setNodes((nds) => nds.concat(newNode));
+  };
+
+  const updateNodeConfig = (nodeId: string, config: any) => {
+    setNodes((nds) =>
+      nds.map((node) => {
+        if (node.id === nodeId) {
+          return {
+            ...node,
+            data: {
+              ...node.data,
+              config: {
+                ...node.data.config,
+                ...config,
+              },
+            },
+          };
+        }
+        return node;
+      })
+    );
+    // Also update selectedNode to reflect changes in UI
+    if (selectedNode?.id === nodeId) {
+      setSelectedNode((prev: any) => ({
+        ...prev,
+        data: {
+          ...prev.data,
+          config: {
+            ...prev.data.config,
+            ...config,
+          },
+        },
+      }));
+    }
   };
 
   if (activeFlow) {
@@ -4952,6 +5144,29 @@ const Automations = () => {
             </div>
           </div>
           <div className="flex gap-4">
+            <button 
+              onClick={() => setShowHeatmap(!showHeatmap)}
+              className={cn(
+                "flex items-center gap-2 px-3 py-1 border text-[10px] font-bold uppercase transition-colors",
+                showHeatmap ? "bg-brass text-white border-brass" : "bg-white text-ink border-border-hairline hover:border-ink"
+              )}
+            >
+              <Zap size={14} />
+              {showHeatmap ? "Heatmap On" : "Heatmap Off"}
+            </button>
+            <button 
+              onClick={() => setShowSimulation(true)}
+              className="flex items-center gap-2 px-3 py-1 bg-white border border-border-hairline hover:border-ink text-[10px] font-bold uppercase transition-colors"
+            >
+              <Play size={14} />
+              Simulate
+            </button>
+            {validationErrors.length > 0 && (
+              <div className="flex items-center gap-2 px-3 py-1 bg-burgundy/10 border border-burgundy/20 text-burgundy text-[10px] font-bold uppercase">
+                <AlertCircle size={14} />
+                {validationErrors.length} Errors
+              </div>
+            )}
             {activeFlow.status === 'ACTIVE' && (
               <button 
                 onClick={() => loadAnalytics(activeFlow.id)} 
@@ -4965,6 +5180,10 @@ const Automations = () => {
             <button onClick={saveFlow} className="btn-secondary">Save Changes</button>
             <button 
               onClick={async () => {
+                if (!validateFlow()) {
+                  alert("Please fix validation errors before activating the flow.");
+                  return;
+                }
                 const updated = await api.updateFlow(activeFlow.id, { status: 'ACTIVE' });
                 setActiveFlow(updated);
                 setFlows(flows.map(f => f.id === updated.id ? updated : f));
@@ -4977,50 +5196,417 @@ const Automations = () => {
           </div>
         </div>
         
-        <div className="flex-1 relative">
-          <ReactFlow
-            nodes={nodes}
-            edges={edges}
-            onNodesChange={onNodesChange}
-            onEdgesChange={onEdgesChange}
-            onConnect={onConnect}
-            nodeTypes={automationNodeTypes}
-            fitView
+        {validationErrors.length > 0 && (
+          <div className="bg-burgundy text-white px-6 py-3 flex flex-col gap-2">
+            <div className="flex items-center justify-between text-[10px] font-black uppercase tracking-widest">
+              <div className="flex items-center gap-4">
+                <AlertCircle size={16} />
+                <span>Workflow has {validationErrors.length} validation errors that prevent activation</span>
+              </div>
+              <button onClick={() => setValidationErrors([])} className="hover:opacity-50">Dismiss</button>
+            </div>
+            <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-x-8 gap-y-1 mt-2">
+              {validationErrors.map((err, idx) => (
+                <div key={idx} className="text-[9px] flex items-start gap-2 opacity-90">
+                  <span className="mt-1 w-1 h-1 bg-white rounded-full flex-shrink-0" />
+                  {err}
+                </div>
+              ))}
+            </div>
+          </div>
+        )}
+        
+        <div className="flex-1 relative flex">
+          <div className="flex-1 relative">
+            <ReactFlow
+              nodes={nodes.map(n => ({
+                ...n,
+                data: { 
+                  ...n.data, 
+                  isSimulated: simulationPath.includes(n.id)
+                }
+              }))}
+              edges={edges.map(e => ({
+                ...e,
+                animated: simulationPath.includes(e.source) && simulationPath.includes(e.target)
+              }))}
+              onNodesChange={onNodesChange}
+              onEdgesChange={onEdgesChange}
+              onConnect={onConnect}
+              onNodeClick={(_, node) => setSelectedNode(node)}
+              onPaneClick={() => setSelectedNode(null)}
+              nodeTypes={automationNodeTypes}
+              fitView
+            >
+              <Background color="#D4CFC6" gap={20} />
+              <Controls />
+              <MiniMap 
+                nodeStrokeColor={(n: any) => n.data?.color?.split(' ')[1] || '#141414'}
+                nodeColor={(n: any) => n.data?.color?.split(' ')[0] || '#f5f5f5'}
+              />
+              <Panel position="top-right" className="bg-bg border border-ink p-4 shadow-xl space-y-4 w-64">
+                <p className="text-[10px] font-black uppercase tracking-widest border-b border-border-hairline pb-2">Workflow Components</p>
+                
+                <div className="space-y-4">
+                  <div>
+                    <p className="text-[8px] font-black uppercase text-ink/40 mb-2">Triggers</p>
+                    <div className="grid grid-cols-2 gap-2">
+                      <button onClick={() => addNode('Trigger', 'On Signup', 'Zap', 'bg-burgundy/10 text-burgundy')} className="p-2 border border-border-hairline hover:border-burgundy text-[9px] font-bold uppercase text-left">Signup</button>
+                      <button onClick={() => addNode('Trigger', 'Webhook', 'Globe', 'bg-burgundy/10 text-burgundy')} className="p-2 border border-border-hairline hover:border-burgundy text-[9px] font-bold uppercase text-left">Webhook</button>
+                      <button onClick={() => addNode('Trigger', 'Custom Event', 'Sparkles', 'bg-burgundy/10 text-burgundy')} className="p-2 border border-border-hairline hover:border-burgundy text-[9px] font-bold uppercase text-left">Event</button>
+                    </div>
+                  </div>
+
+                  <div>
+                    <p className="text-[8px] font-black uppercase text-ink/40 mb-2">Actions</p>
+                    <div className="grid grid-cols-2 gap-2">
+                      <button onClick={() => addNode('Action', 'Send Email', 'Mail', 'bg-ink/5 text-ink')} className="p-2 border border-border-hairline hover:border-burgundy text-[9px] font-bold uppercase text-left">Email</button>
+                      <button onClick={() => addNode('Action', 'Add Tag', 'Tag', 'bg-ink/5 text-ink')} className="p-2 border border-border-hairline hover:border-burgundy text-[9px] font-bold uppercase text-left">Tag</button>
+                      <button onClick={() => addNode('Action', 'Wait', 'Clock', 'bg-ink/5 text-ink')} className="p-2 border border-border-hairline hover:border-burgundy text-[9px] font-bold uppercase text-left">Delay</button>
+                    </div>
+                  </div>
+
+                  <div>
+                    <p className="text-[8px] font-black uppercase text-ink/40 mb-2">Logic</p>
+                    <div className="grid grid-cols-2 gap-2">
+                      <button onClick={() => addNode('Logic', 'If/Else', 'Split', 'bg-brass/10 text-brass')} className="p-2 border border-border-hairline hover:border-burgundy text-[9px] font-bold uppercase text-left">Split</button>
+                      <button onClick={() => addNode('Logic', 'A/B Test', 'GitBranch', 'bg-brass/10 text-brass')} className="p-2 border border-border-hairline hover:border-burgundy text-[9px] font-bold uppercase text-left">A/B Test</button>
+                      <button onClick={() => addNode('Logic', 'Multi-path Split', 'Filter', 'bg-brass/10 text-brass')} className="p-2 border border-border-hairline hover:border-burgundy text-[9px] font-bold uppercase text-left">Multi-path</button>
+                    </div>
+                  </div>
+                </div>
+              </Panel>
+            </ReactFlow>
+          </div>
+
+          {/* Node Configuration Panel */}
+          <AnimatePresence>
+            {showSimulation && (
+        <div className="fixed inset-0 bg-ink/80 backdrop-blur-sm z-[100] flex items-center justify-center p-4">
+          <motion.div 
+            initial={{ opacity: 0, scale: 0.95 }}
+            animate={{ opacity: 1, scale: 1 }}
+            className="bg-white border-2 border-ink w-full max-w-md p-8 space-y-6"
           >
-            <Background color="#D4CFC6" gap={20} />
-            <Controls />
-            <MiniMap nodeColor={(n) => n.data?.color === 'bg-burgundy/10' ? '#8B1A1A' : '#1A1814'} />
-            <Panel position="top-right" className="bg-bg border border-ink p-4 shadow-xl space-y-4 w-64">
-              <p className="text-[10px] font-black uppercase tracking-widest border-b border-border-hairline pb-2">Workflow Components</p>
-              
-              <div className="space-y-4">
-                <div>
-                  <p className="text-[8px] font-black uppercase text-ink/40 mb-2">Triggers</p>
-                  <div className="grid grid-cols-2 gap-2">
-                    <button onClick={() => addNode('Trigger', 'On Signup', 'Zap', 'bg-burgundy/10 text-burgundy')} className="p-2 border border-border-hairline hover:border-burgundy text-[9px] font-bold uppercase">Signup</button>
-                    <button onClick={() => addNode('Trigger', 'Webhook', 'Globe', 'bg-burgundy/10 text-burgundy')} className="p-2 border border-border-hairline hover:border-burgundy text-[9px] font-bold uppercase">Webhook</button>
-                    <button onClick={() => addNode('Trigger', 'Custom Event', 'Sparkles', 'bg-burgundy/10 text-burgundy')} className="p-2 border border-border-hairline hover:border-burgundy text-[9px] font-bold uppercase">Event</button>
-                  </div>
-                </div>
+            <div className="flex justify-between items-center border-b border-border-hairline pb-4">
+              <h3 className="text-xl font-serif font-black uppercase italic">Simulate Journey</h3>
+              <button onClick={() => { setShowSimulation(false); setSimulationPath([]); }} className="hover:opacity-50"><X size={20} /></button>
+            </div>
 
-                <div>
-                  <p className="text-[8px] font-black uppercase text-ink/40 mb-2">Actions</p>
-                  <div className="grid grid-cols-2 gap-2">
-                    <button onClick={() => addNode('Action', 'Send Email', 'Mail', 'bg-ink/5 text-ink')} className="p-2 border border-border-hairline hover:border-burgundy text-[9px] font-bold uppercase">Email</button>
-                    <button onClick={() => addNode('Action', 'Add Tag', 'Tag', 'bg-ink/5 text-ink')} className="p-2 border border-border-hairline hover:border-burgundy text-[9px] font-bold uppercase">Tag</button>
-                    <button onClick={() => addNode('Action', 'Wait', 'Clock', 'bg-ink/5 text-ink')} className="p-2 border border-border-hairline hover:border-burgundy text-[9px] font-bold uppercase">Delay</button>
+            <div className="space-y-4">
+              <div className="space-y-2">
+                <label className="text-[10px] font-black uppercase tracking-widest text-ink/40">Test Contact Profile</label>
+                <div className="grid grid-cols-2 gap-4">
+                  <div className="space-y-1">
+                    <label className="text-[9px] font-bold uppercase">Tags (comma separated)</label>
+                    <input 
+                      type="text" 
+                      className="w-full p-2 border border-border-hairline text-xs font-mono"
+                      value={simulatedContact.tags.join(', ')}
+                      onChange={(e) => setSimulatedContact({ ...simulatedContact, tags: e.target.value.split(',').map(t => t.trim()) })}
+                    />
                   </div>
-                </div>
-
-                <div>
-                  <p className="text-[8px] font-black uppercase text-ink/40 mb-2">Logic</p>
-                  <div className="grid grid-cols-2 gap-2">
-                    <button onClick={() => addNode('Logic', 'If/Else', 'Split', 'bg-brass/10 text-brass')} className="p-2 border border-border-hairline hover:border-burgundy text-[9px] font-bold uppercase">Split</button>
+                  <div className="space-y-1">
+                    <label className="text-[9px] font-bold uppercase">Purchases</label>
+                    <input 
+                      type="number" 
+                      className="w-full p-2 border border-border-hairline text-xs font-mono"
+                      value={simulatedContact.purchases}
+                      onChange={(e) => setSimulatedContact({ ...simulatedContact, purchases: parseInt(e.target.value) })}
+                    />
                   </div>
                 </div>
               </div>
-            </Panel>
-          </ReactFlow>
+
+              <button 
+                onClick={() => {
+                  const path: string[] = [];
+                  let currentNode = nodes.find(n => n.data.type === 'Trigger');
+                  
+                  if (currentNode) {
+                    path.push(currentNode.id);
+                    
+                    for (let i = 0; i < 20; i++) {
+                      const outgoingEdges = edges.filter(e => e.source === currentNode?.id);
+                      if (outgoingEdges.length === 0) break;
+
+                      if (currentNode?.data.label === 'If/Else') {
+                        const config = currentNode.data.config;
+                        let result = false;
+                        if (config?.condition === 'tag_exists') {
+                          result = simulatedContact.tags.includes(config.tagId);
+                        } else if (config?.condition === 'has_purchased') {
+                          result = simulatedContact.purchases > 0;
+                        }
+                        
+                        const targetEdge = outgoingEdges.find(e => e.sourceHandle === (result ? 'true' : 'false'));
+                        if (targetEdge) {
+                          currentNode = nodes.find(n => n.id === targetEdge.target);
+                        } else {
+                          break;
+                        }
+                      } else if (currentNode?.data.label === 'A/B Test') {
+                        const result = Math.random() * 100 < (currentNode.data.config?.splitPercentage || 50) ? 'a' : 'b';
+                        const targetEdge = outgoingEdges.find(e => e.sourceHandle === result);
+                        if (targetEdge) {
+                          currentNode = nodes.find(n => n.id === targetEdge.target);
+                        } else {
+                          break;
+                        }
+                      } else if (currentNode?.data.label === 'Multi-path Split') {
+                        // Randomly pick one of the paths for simulation
+                        const paths = currentNode.data.config?.paths || ['Path 1', 'Path 2'];
+                        const randomIdx = Math.floor(Math.random() * paths.length);
+                        const targetEdge = outgoingEdges.find(e => e.sourceHandle === `path-${randomIdx}`);
+                        if (targetEdge) {
+                          currentNode = nodes.find(n => n.id === targetEdge.target);
+                        } else {
+                          // If no edge for that path, try the first available edge
+                          currentNode = nodes.find(n => n.id === outgoingEdges[0].target);
+                        }
+                      } else {
+                        currentNode = nodes.find(n => n.id === outgoingEdges[0].target);
+                      }
+
+                      if (currentNode) {
+                        path.push(currentNode.id);
+                      } else {
+                        break;
+                      }
+                    }
+                  }
+                  setSimulationPath(path);
+                  setShowSimulation(false);
+                }}
+                className="w-full py-3 bg-burgundy text-white text-xs font-black uppercase tracking-widest hover:bg-burgundy/90 transition-colors"
+              >
+                Run Simulation
+              </button>
+            </div>
+          </motion.div>
+        </div>
+      )}
+
+      {selectedNode && (
+              <motion.div
+                initial={{ x: '100%' }}
+                animate={{ x: 0 }}
+                exit={{ x: '100%' }}
+                className="w-80 bg-surface border-l border-border-hairline p-6 overflow-y-auto z-50"
+              >
+                <div className="flex justify-between items-center mb-8">
+                  <h3 className="font-serif text-xl font-bold">Configure Node</h3>
+                  <button onClick={() => setSelectedNode(null)} className="text-ink/40 hover:text-burgundy">
+                    <X size={20} />
+                  </button>
+                </div>
+
+                <div className="space-y-8">
+                  <div>
+                    <p className="text-[10px] font-black uppercase tracking-widest text-ink/40 mb-2">Node Type</p>
+                    <div className="flex items-center gap-3 p-3 bg-bg border border-border-hairline">
+                      <div className={cn("p-2", selectedNode.data.color)}>
+                        {React.createElement(iconMap[selectedNode.data.icon] || Zap, { size: 16 })}
+                      </div>
+                      <div>
+                        <p className="text-xs font-bold">{selectedNode.data.label}</p>
+                        <p className="text-[8px] font-black uppercase text-ink/40">{selectedNode.data.type}</p>
+                      </div>
+                    </div>
+                  </div>
+
+                  {/* Specific Configuration Forms */}
+                  {selectedNode.data.label === 'Send Email' && (
+                    <div className="space-y-4">
+                      <p className="text-[10px] font-black uppercase tracking-widest text-ink/40">Email Settings</p>
+                      <div className="space-y-2">
+                        <label className="text-[9px] font-bold uppercase">Select Template</label>
+                        <select 
+                          className="w-full bg-bg border border-border-hairline p-2 text-xs"
+                          value={selectedNode.data.config?.templateId || ''}
+                          onChange={(e) => updateNodeConfig(selectedNode.id, { templateId: e.target.value })}
+                        >
+                          <option value="">Choose a template...</option>
+                          {emailTemplates.map(t => (
+                            <option key={t.id} value={t.id}>{t.name}</option>
+                          ))}
+                        </select>
+                      </div>
+                      <div className="space-y-2">
+                        <label className="text-[9px] font-bold uppercase">Subject Override (Optional)</label>
+                        <input 
+                          type="text"
+                          className="w-full bg-bg border border-border-hairline p-2 text-xs"
+                          placeholder="Leave empty to use template subject"
+                          value={selectedNode.data.config?.subject || ''}
+                          onChange={(e) => updateNodeConfig(selectedNode.id, { subject: e.target.value })}
+                        />
+                      </div>
+                    </div>
+                  )}
+
+                  {selectedNode.data.label === 'Wait' && (
+                    <div className="space-y-4">
+                      <p className="text-[10px] font-black uppercase tracking-widest text-ink/40">Delay Settings</p>
+                      <div className="grid grid-cols-2 gap-4">
+                        <div className="space-y-2">
+                          <label className="text-[9px] font-bold uppercase">Duration</label>
+                          <input 
+                            type="number"
+                            className="w-full bg-bg border border-border-hairline p-2 text-xs"
+                            value={selectedNode.data.config?.duration || 1}
+                            onChange={(e) => updateNodeConfig(selectedNode.id, { duration: parseInt(e.target.value) })}
+                          />
+                        </div>
+                        <div className="space-y-2">
+                          <label className="text-[9px] font-bold uppercase">Unit</label>
+                          <select 
+                            className="w-full bg-bg border border-border-hairline p-2 text-xs"
+                            value={selectedNode.data.config?.unit || 'days'}
+                            onChange={(e) => updateNodeConfig(selectedNode.id, { unit: e.target.value })}
+                          >
+                            <option value="minutes">Minutes</option>
+                            <option value="hours">Hours</option>
+                            <option value="days">Days</option>
+                            <option value="weeks">Weeks</option>
+                          </select>
+                        </div>
+                      </div>
+                    </div>
+                  )}
+
+                  {selectedNode.data.label === 'Add Tag' && (
+                    <div className="space-y-4">
+                      <p className="text-[10px] font-black uppercase tracking-widest text-ink/40">Tag Settings</p>
+                      <div className="space-y-2">
+                        <label className="text-[9px] font-bold uppercase">Select Tag</label>
+                        <select 
+                          className="w-full bg-bg border border-border-hairline p-2 text-xs"
+                          value={selectedNode.data.config?.tagId || ''}
+                          onChange={(e) => updateNodeConfig(selectedNode.id, { tagId: e.target.value })}
+                        >
+                          <option value="">Choose a tag...</option>
+                          {availableTags.map(t => (
+                            <option key={t.id} value={t.id}>{t.name}</option>
+                          ))}
+                        </select>
+                      </div>
+                    </div>
+                  )}
+
+                  {selectedNode.data.label === 'If/Else' && (
+                    <div className="space-y-4">
+                      <p className="text-[10px] font-black uppercase tracking-widest text-ink/40">Logic Settings</p>
+                      <div className="space-y-2">
+                        <label className="text-[9px] font-bold uppercase">Condition Type</label>
+                        <select 
+                          className="w-full bg-bg border border-border-hairline p-2 text-xs"
+                          value={selectedNode.data.config?.conditionType || 'email_open'}
+                          onChange={(e) => updateNodeConfig(selectedNode.id, { conditionType: e.target.value })}
+                        >
+                          <option value="email_open">Email Opened</option>
+                          <option value="email_click">Link Clicked</option>
+                          <option value="tag_exists">Has Tag</option>
+                          <option value="purchase_made">Made Purchase</option>
+                        </select>
+                      </div>
+                      {selectedNode.data.config?.conditionType === 'tag_exists' && (
+                        <div className="space-y-2">
+                          <label className="text-[9px] font-bold uppercase">Tag to Check</label>
+                          <select 
+                            className="w-full bg-bg border border-border-hairline p-2 text-xs"
+                            value={selectedNode.data.config?.checkTagId || ''}
+                            onChange={(e) => updateNodeConfig(selectedNode.id, { checkTagId: e.target.value })}
+                          >
+                            <option value="">Choose a tag...</option>
+                            {availableTags.map(t => (
+                              <option key={t.id} value={t.id}>{t.name}</option>
+                            ))}
+                          </select>
+                        </div>
+                      )}
+                    </div>
+                  )}
+
+                  {selectedNode.data.label === 'A/B Test' && (
+                    <div className="space-y-4">
+                      <p className="text-[10px] font-black uppercase tracking-widest text-ink/40">A/B Test Settings</p>
+                      <div className="space-y-2">
+                        <label className="text-[9px] font-bold uppercase">Split Percentage (Var A)</label>
+                        <div className="flex items-center gap-4">
+                          <input 
+                            type="range"
+                            min="0"
+                            max="100"
+                            className="flex-1 accent-burgundy"
+                            value={selectedNode.data.config?.splitPercentage || 50}
+                            onChange={(e) => updateNodeConfig(selectedNode.id, { splitPercentage: parseInt(e.target.value) })}
+                          />
+                          <span className="text-xs font-mono font-bold w-12">{selectedNode.data.config?.splitPercentage || 50}%</span>
+                        </div>
+                      </div>
+                      <div className="p-3 bg-bg border border-border-hairline text-[10px] text-ink/60 italic">
+                        Contacts will be randomly split between Path A and Path B based on this percentage.
+                      </div>
+                    </div>
+                  )}
+
+                  {selectedNode.data.label === 'Multi-path Split' && (
+                    <div className="space-y-4">
+                      <p className="text-[10px] font-black uppercase tracking-widest text-ink/40">Multi-path Settings</p>
+                      <div className="space-y-3">
+                        <label className="text-[9px] font-bold uppercase">Paths</label>
+                        {(selectedNode.data.config?.paths || ['Path 1', 'Path 2']).map((path: string, idx: number) => (
+                          <div key={idx} className="flex gap-2">
+                            <input 
+                              type="text"
+                              className="flex-1 bg-bg border border-border-hairline p-2 text-xs"
+                              value={path}
+                              onChange={(e) => {
+                                const newPaths = [...(selectedNode.data.config?.paths || ['Path 1', 'Path 2'])];
+                                newPaths[idx] = e.target.value;
+                                updateNodeConfig(selectedNode.id, { paths: newPaths });
+                              }}
+                            />
+                            <button 
+                              onClick={() => {
+                                const newPaths = (selectedNode.data.config?.paths || ['Path 1', 'Path 2']).filter((_: any, i: number) => i !== idx);
+                                updateNodeConfig(selectedNode.id, { paths: newPaths });
+                              }}
+                              className="p-2 text-burgundy hover:bg-burgundy/5"
+                            >
+                              <Trash2 size={14} />
+                            </button>
+                          </div>
+                        ))}
+                        <button 
+                          onClick={() => {
+                            const newPaths = [...(selectedNode.data.config?.paths || ['Path 1', 'Path 2']), `Path ${(selectedNode.data.config?.paths || ['Path 1', 'Path 2']).length + 1}`];
+                            updateNodeConfig(selectedNode.id, { paths: newPaths });
+                          }}
+                          className="w-full py-2 border border-dashed border-border-hairline text-[9px] font-bold uppercase hover:border-ink"
+                        >
+                          + Add Path
+                        </button>
+                      </div>
+                    </div>
+                  )}
+
+                  <div className="pt-8 border-t border-border-hairline">
+                    <button 
+                      onClick={() => {
+                        setNodes((nds) => nds.filter(n => n.id !== selectedNode.id));
+                        setSelectedNode(null);
+                      }}
+                      className="w-full py-3 border border-burgundy/20 text-burgundy text-[10px] font-black uppercase tracking-widest hover:bg-burgundy hover:text-white transition-all"
+                    >
+                      Delete Node
+                    </button>
+                  </div>
+                </div>
+              </motion.div>
+            )}
+          </AnimatePresence>
         </div>
       </div>
     );
