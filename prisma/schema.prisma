@@ -91,10 +91,21 @@ model Product {
   imageUrl       String?
   productUrl     String?
   source         String       @default("CUSTOM") // SHOPIFY, WOOCOMMERCE, CUSTOM
+  stock          Int          @default(0)
   organizationId String
   organization   Organization @relation(fields: [organizationId], references: [id])
   createdAt      DateTime     @default(now())
   updatedAt      DateTime     @updatedAt
+}
+
+model WebhookLog {
+  id             String   @id @default(cuid())
+  source         String   // e.g., "SHOPIFY"
+  topic          String   // e.g., "products/update"
+  payload        String   @db.Text
+  processed      Boolean  @default(false)
+  organizationId String?
+  createdAt      DateTime @default(now())
 }
 
 model Revenue {
@@ -216,8 +227,22 @@ model Contact {
   consentLogs    ConsentLog[]
   dataRequests   DataRequest[]
   engagement     EngagementEvent[]
+  notifications  Notification[]
 
   @@unique([email, organizationId])
+}
+
+model Notification {
+  id             String   @id @default(cuid())
+  title          String
+  body           String
+  link           String?
+  isRead         Boolean  @default(false)
+  contactId      String
+  contact        Contact  @relation(fields: [contactId], references: [id])
+  campaignId     String?
+  campaign       Campaign? @relation(fields: [campaignId], references: [id])
+  createdAt      DateTime @default(now())
 }
 
 model Tag {
@@ -266,6 +291,7 @@ model Campaign {
   fromEmail      String
   replyTo        String?
   content        String       @default("") // HTML or Block JSON
+  channel        String       @default("EMAIL") // EMAIL, SMS, WHATSAPP
   subjectB       String?
   contentB       String?
   testPercentage Int?         @default(20)
@@ -288,6 +314,7 @@ model Campaign {
   approvals      ApprovalRequest[]
   variations     CampaignVariation[]
   engagement     EngagementEvent[]
+  notifications  Notification[]
 }
 
 model CampaignVariation {

@@ -1040,7 +1040,7 @@ async function startServer() {
     const org = await prisma.organization.findFirst();
     const { 
       name, subject, previewText, fromName, fromEmail, content, type, scheduledAt, timezone,
-      subjectB, contentB, testPercentage, testDuration, winnerCriteria
+      subjectB, contentB, testPercentage, testDuration, winnerCriteria, channel
     } = req.body;
     const campaign = await prisma.campaign.create({
       data: {
@@ -1051,6 +1051,7 @@ async function startServer() {
         fromEmail,
         content,
         type,
+        channel: channel || "EMAIL",
         subjectB,
         contentB,
         testPercentage: testPercentage ? parseInt(testPercentage) : undefined,
@@ -1074,6 +1075,28 @@ async function startServer() {
         sentAt: status === "SENT" ? new Date() : undefined
       },
     });
+
+    if (status === "SENT" && campaign.channel === "IN_APP") {
+      const contacts = await prisma.contact.findMany({
+        where: { organizationId: campaign.organizationId }
+      });
+      for (const contact of contacts) {
+        await prisma.notification.create({
+          data: {
+            title: campaign.name,
+            body: campaign.subject,
+            contactId: contact.id,
+            campaignId: campaign.id
+          }
+        });
+      }
+    }
+
+    if (status === "SENT" && campaign.channel === "SMS") {
+      console.log(`[SMS Gateway] Sending SMS campaign "${campaign.name}" to organization contacts.`);
+      // In a real app, we would call Twilio or similar here
+    }
+
     res.json(campaign);
   });
 
@@ -1759,6 +1782,14 @@ app.get("/api/integrations", async (req, res) => {
     });
   });
 
+  app.get("/api/contacts/:id/notifications", async (req, res) => {
+    const notifications = await prisma.notification.findMany({
+      where: { contactId: req.params.id },
+      orderBy: { createdAt: 'desc' }
+    });
+    res.json(notifications);
+  });
+
   app.post("/api/contacts/:id/preferences", async (req, res) => {
     const { listIds, source, ipAddress, userAgent } = req.body;
     const contactId = req.params.id;
@@ -1833,6 +1864,198 @@ app.get("/api/webhooks", async (req, res) => {
   const org = await prisma.organization.findFirst();
   const webhooks = await prisma.webhook.findMany({ where: { organizationId: org?.id } });
   res.json(webhooks);
+});
+
+app.post("/api/webhooks", async (req, res) => {
+  const org = await prisma.organization.findFirst();
+  if (!org) return res.status(404).json({ error: "Organization not found" });
+  const { url, events } = req.body;
+  const webhook = await prisma.webhook.create({
+    data: {
+      url,
+      events: JSON.stringify(events),
+      organizationId: org.id,
+      isActive: true
+    }
+  });
+  res.json(webhook);
+});
+
+app.delete("/api/webhooks/:id", async (req, res) => {
+  await prisma.webhook.delete({ where: { id: req.params.id } });
+  res.json({ success: true });
+});
+
+// Shopify Incoming Webhooks
+app.post("/api/webhooks/shopify", async (req, res) => {
+  const topic = req.headers["x-shopify-topic"] as string;
+  const shopDomain = req.headers["x-shopify-shop-domain"] as string;
+  const payload = req.body;
+
+  console.log(`[Shopify Webhook] Received: ${topic} from ${shopDomain}`);
+
+  // Find organization
+  const org = await prisma.organization.findFirst();
+  if (!org) return res.status(200).end();
+
+  // Log the raw webhook
+  const log = await prisma.webhookLog.create({
+    data: {
+      source: "SHOPIFY",
+      topic: topic || "unknown",
+      payload: JSON.stringify(payload),
+      processed: false,
+      organizationId: org.id
+    }
+  });
+
+  try {
+    if (topic === "products/update") {
+      const { variants } = payload;
+      if (variants && Array.isArray(variants)) {
+        for (const variant of variants) {
+          await prisma.product.updateMany({
+            where: {
+              externalId: variant.id.toString(),
+              organizationId: org.id
+            },
+            data: {
+              stock: variant.inventory_quantity,
+              price: parseFloat(variant.price),
+              updatedAt: new Date()
+            }
+          });
+        }
+      }
+    }
+
+    if (topic === "orders/create") {
+      const { customer, total_price, id: orderId } = payload;
+      if (customer && customer.email) {
+        const contact = await prisma.contact.findFirst({
+          where: { email: customer.email, organizationId: org.id }
+        });
+
+        if (contact) {
+          await prisma.event.create({
+            data: {
+              type: "ORDER_PLACED",
+              metadata: JSON.stringify({ 
+                orderId, 
+                total: total_price,
+                source: "SHOPIFY_WEBHOOK"
+              }),
+              contactId: contact.id,
+              timestamp: new Date()
+            }
+          });
+        }
+      }
+    }
+
+    // Mark as processed
+    await prisma.webhookLog.update({
+      where: { id: log.id },
+      data: { processed: true }
+    });
+
+  } catch (error) {
+    console.error("[Shopify Webhook] Error processing:", error);
+  }
+
+  res.status(200).end();
+});
+
+app.post("/api/webhooks/shopify/simulate", async (req, res) => {
+  const { type } = req.body;
+  const org = await prisma.organization.findFirst();
+  if (!org) return res.status(404).json({ error: "No organization found" });
+
+  // Ensure mock product exists
+  let product = await prisma.product.findFirst({
+    where: { externalId: "shopify_12345", organizationId: org.id }
+  });
+
+  if (!product) {
+    product = await prisma.product.create({
+      data: {
+        name: "Mock Shopify Product",
+        externalId: "shopify_12345",
+        price: 99.99,
+        source: "SHOPIFY",
+        stock: 10,
+        organizationId: org.id
+      }
+    });
+  }
+
+  if (type === 'stock') {
+    const newStock = Math.floor(Math.random() * 100);
+    // Simulate by calling the handler logic (or just updating directly for the simulation)
+    await prisma.product.update({
+      where: { id: product.id },
+      data: { stock: newStock }
+    });
+    
+    await prisma.webhookLog.create({
+      data: {
+        source: "SHOPIFY",
+        topic: "products/update",
+        payload: JSON.stringify({ id: 12345, variants: [{ id: "shopify_12345", inventory_quantity: newStock, price: "99.99" }] }),
+        processed: true,
+        organizationId: org.id
+      }
+    });
+
+    return res.json({ success: true, message: `Stock updated to ${newStock} via simulated webhook` });
+  }
+
+  if (type === 'order') {
+    const contact = await prisma.contact.findFirst({ where: { organizationId: org.id } });
+    if (!contact) return res.status(404).json({ error: "No contact found to simulate order" });
+
+    const orderId = Date.now().toString();
+    await prisma.event.create({
+      data: {
+        type: "ORDER_PLACED",
+        metadata: JSON.stringify({ orderId, total: "149.50", source: "SIMULATED_WEBHOOK" }),
+        contactId: contact.id,
+        timestamp: new Date()
+      }
+    });
+
+    await prisma.webhookLog.create({
+      data: {
+        source: "SHOPIFY",
+        topic: "orders/create",
+        payload: JSON.stringify({ id: orderId, total_price: "149.50", customer: { email: contact.email } }),
+        processed: true,
+        organizationId: org.id
+      }
+    });
+
+    return res.json({ success: true, message: "Order creation simulated via webhook" });
+  }
+
+  res.status(400).json({ error: "Invalid simulation type" });
+});
+
+// AI & Predictive
+app.post("/api/ai/churn-prediction", async (req, res) => {
+  // Simulate AI processing
+  await new Promise(resolve => setTimeout(resolve, 2000));
+  
+  const subscribers = [
+    { name: 'Kazuo Ishiguro', email: 'kazuo@example.com', score: 45, prob: '82%', risk: 'HIGH' },
+    { name: 'Elena Ferrante', email: 'elena@example.com', score: 78, prob: '15%', risk: 'LOW' },
+    { name: 'Julian Barnes', email: 'julian@example.com', score: 85, prob: '8%', risk: 'LOW' },
+    { name: 'Zadie Smith', email: 'zadie@example.com', score: 92, prob: '3%', risk: 'LOW' },
+  ];
+  
+  res.json({
+    summary: { high: 124, medium: 452, low: 2841 },
+    topAtRisk: subscribers
+  });
 });
 
 // --- SSO (Enterprise) ---

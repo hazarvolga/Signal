@@ -352,6 +352,28 @@ export const api = {
     const res = await fetch('/api/webhooks');
     return res.json();
   },
+  async addWebhook(data: { url: string, events: string[] }): Promise<any> {
+    const res = await fetch('/api/webhooks', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(data),
+    });
+    return res.json();
+  },
+  async deleteWebhook(id: string): Promise<{ success: boolean }> {
+    const res = await fetch(`/api/webhooks/${id}`, {
+      method: 'DELETE',
+    });
+    return res.json();
+  },
+  async simulateShopifyWebhook(type: 'stock' | 'order'): Promise<any> {
+    const res = await fetch('/api/webhooks/shopify/simulate', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ type }),
+    });
+    return res.json();
+  },
 
   async getWorkflowTemplates(): Promise<any[]> {
     const res = await fetch('/api/workflow-templates');
@@ -394,6 +416,10 @@ export const api = {
   // Preference Center
   async getContactPreferences(id: string): Promise<any> {
     const res = await fetch(`/api/contacts/${id}/preferences`);
+    return res.json();
+  },
+  async getContactNotifications(id: string): Promise<any[]> {
+    const res = await fetch(`/api/contacts/${id}/notifications`);
     return res.json();
   },
 

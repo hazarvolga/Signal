@@ -34,6 +34,7 @@ import {
   Wand2,
   AlertTriangle,
   ShoppingBag,
+  Smartphone,
   CreditCard,
   Users2,
   Link2,
@@ -48,6 +49,7 @@ import {
   Sun,
   Moon,
   Menu,
+  MessageSquare,
   X,
   Play,
   GitBranch,
@@ -906,11 +908,48 @@ const Collaboration = () => {
 const Integrations = () => {
   const [integrations, setIntegrations] = useState<any[]>([]);
   const [webhooks, setWebhooks] = useState<any[]>([]);
+  const [isAddingWebhook, setIsAddingWebhook] = useState(false);
+  const [newWebhook, setNewWebhook] = useState({ url: '', events: [] as string[] });
+
+  const availableEvents = [
+    'contact.created',
+    'contact.unsubscribed',
+    'campaign.sent',
+    'campaign.opened',
+    'campaign.clicked',
+    'order.placed',
+    'stock.updated'
+  ];
 
   useEffect(() => {
     api.getIntegrations().then(setIntegrations);
     api.getWebhooks().then(setWebhooks);
   }, []);
+
+  const handleAddWebhook = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!newWebhook.url || newWebhook.events.length === 0) return;
+    await api.addWebhook(newWebhook);
+    setIsAddingWebhook(false);
+    setNewWebhook({ url: '', events: [] });
+    api.getWebhooks().then(setWebhooks);
+  };
+
+  const handleDeleteWebhook = async (id: string) => {
+    if (confirm("Delete this webhook?")) {
+      await api.deleteWebhook(id);
+      api.getWebhooks().then(setWebhooks);
+    }
+  };
+
+  const toggleEvent = (event: string) => {
+    setNewWebhook(prev => ({
+      ...prev,
+      events: prev.events.includes(event)
+        ? prev.events.filter(e => e !== event)
+        : [...prev.events, event]
+    }));
+  };
 
   const marketplace = [
     { id: 'shopify', name: 'Shopify', desc: 'Sync products and customers.', icon: <ShoppingBag size={24} />, status: 'Connected' },
@@ -945,6 +984,22 @@ const Integrations = () => {
               )}>
                 {item.status}
               </button>
+              {item.id === 'shopify' && item.status === 'Connected' && (
+                <div className="flex gap-2 pt-2">
+                  <button 
+                    onClick={() => api.simulateShopifyWebhook('stock').then(res => alert(res.message))}
+                    className="flex-1 py-1 text-[8px] font-black uppercase tracking-widest border border-burgundy/20 text-burgundy hover:bg-burgundy hover:text-white transition-all"
+                  >
+                    Simulate Stock
+                  </button>
+                  <button 
+                    onClick={() => api.simulateShopifyWebhook('order').then(res => alert(res.message))}
+                    className="flex-1 py-1 text-[8px] font-black uppercase tracking-widest border border-burgundy/20 text-burgundy hover:bg-burgundy hover:text-white transition-all"
+                  >
+                    Simulate Order
+                  </button>
+                </div>
+              )}
             </div>
           ))}
         </div>
@@ -954,8 +1009,67 @@ const Integrations = () => {
         <div className="col-span-12 lg:col-span-7 space-y-8">
           <div className="flex justify-between items-center">
             <h3 className="text-2xl font-serif font-bold text-ink">Webhooks</h3>
-            <button className="btn-primary py-2 px-4 text-[10px]">Add Webhook</button>
+            <button 
+              onClick={() => setIsAddingWebhook(true)}
+              className="btn-primary py-2 px-4 text-[10px]"
+            >
+              Add Webhook
+            </button>
           </div>
+
+          <AnimatePresence>
+            {isAddingWebhook && (
+              <motion.div
+                initial={{ opacity: 0, height: 0 }}
+                animate={{ opacity: 1, height: 'auto' }}
+                exit={{ opacity: 0, height: 0 }}
+                className="bg-bg border border-border-hairline p-6 space-y-6 overflow-hidden"
+              >
+                <form onSubmit={handleAddWebhook} className="space-y-6">
+                  <div className="space-y-2">
+                    <label className="metric-label">Target URL</label>
+                    <input 
+                      type="url"
+                      required
+                      placeholder="https://your-api.com/webhook"
+                      className="w-full bg-transparent border-b border-border-hairline py-2 font-mono text-xs focus:border-burgundy outline-none"
+                      value={newWebhook.url}
+                      onChange={e => setNewWebhook({ ...newWebhook, url: e.target.value })}
+                    />
+                  </div>
+                  <div className="space-y-2">
+                    <label className="metric-label">Events to Subscribe</label>
+                    <div className="flex flex-wrap gap-2">
+                      {availableEvents.map(ev => (
+                        <button
+                          key={ev}
+                          type="button"
+                          onClick={() => toggleEvent(ev)}
+                          className={cn(
+                            "px-3 py-1 text-[9px] font-black uppercase tracking-widest border transition-all",
+                            newWebhook.events.includes(ev) ? "bg-burgundy text-white border-burgundy" : "border-border-hairline text-ink/40 hover:border-burgundy hover:text-burgundy"
+                          )}
+                        >
+                          {ev}
+                        </button>
+                      ))}
+                    </div>
+                  </div>
+                  <div className="flex gap-4 pt-4">
+                    <button type="submit" className="btn-primary py-2 px-6 text-[10px]">Create Webhook</button>
+                    <button 
+                      type="button" 
+                      onClick={() => setIsAddingWebhook(false)}
+                      className="text-[10px] font-black uppercase tracking-widest text-ink/40 hover:text-burgundy"
+                    >
+                      Cancel
+                    </button>
+                  </div>
+                </form>
+              </motion.div>
+            )}
+          </AnimatePresence>
+
           <div className="border border-border-hairline divide-y divide-border-hairline">
             {webhooks.length === 0 ? (
               <div className="p-12 text-center font-editorial italic text-ink/40">No webhooks configured.</div>
@@ -964,11 +1078,18 @@ const Integrations = () => {
                 <div key={hook.id} className="p-6 flex items-center justify-between hover:bg-surface transition-colors">
                   <div className="space-y-1">
                     <p className="text-xs font-mono font-bold text-ink">{hook.url}</p>
-                    <p className="text-[9px] font-mono text-ink/40 uppercase">Events: {hook.events}</p>
+                    <p className="text-[9px] font-mono text-ink/40 uppercase">
+                      Events: {typeof hook.events === 'string' ? JSON.parse(hook.events).join(', ') : hook.events.join(', ')}
+                    </p>
                   </div>
                   <div className="flex items-center gap-4">
-                    <span className="w-2 h-2 bg-status-success rounded-full"></span>
-                    <button className="text-ink/40 hover:text-burgundy transition-colors"><Trash2 size={16} /></button>
+                    <span className={cn("w-2 h-2 rounded-full", hook.isActive ? "bg-status-success" : "bg-ink/20")}></span>
+                    <button 
+                      onClick={() => handleDeleteWebhook(hook.id)}
+                      className="text-ink/40 hover:text-burgundy transition-colors"
+                    >
+                      <Trash2 size={16} />
+                    </button>
                   </div>
                 </div>
               ))
@@ -1248,6 +1369,7 @@ const Campaigns = () => {
     fromEmail: 'editor@signal.app',
     content: '',
     contentB: '',
+    channel: 'EMAIL' as 'EMAIL' | 'SMS' | 'WHATSAPP' | 'IN_APP',
     type: 'REGULAR' as 'REGULAR' | 'AB',
     testPercentage: 20,
     testDuration: 4,
@@ -1267,6 +1389,7 @@ const Campaigns = () => {
   const [isPredictingTime, setIsPredictingTime] = useState(false);
   const [statusFilter, setStatusFilter] = useState<string>('ALL');
   const [typeFilter, setTypeFilter] = useState<string>('ALL');
+  const [channelFilter, setChannelFilter] = useState<string>('ALL');
   const [approvals, setApprovals] = useState<any[]>([]);
   const [templates, setTemplates] = useState<Template[]>([]);
   const [previewCampaign, setPreviewCampaign] = useState<Campaign | null>(null);
@@ -1353,7 +1476,8 @@ const Campaigns = () => {
   const filteredCampaigns = campaigns.filter(camp => {
     const matchesStatus = statusFilter === 'ALL' || camp.status === statusFilter;
     const matchesType = typeFilter === 'ALL' || camp.type === typeFilter;
-    return matchesStatus && matchesType;
+    const matchesChannel = channelFilter === 'ALL' || camp.channel === channelFilter;
+    return matchesStatus && matchesType && matchesChannel;
   });
 
   const handleCreate = async (e: React.FormEvent) => {
@@ -1369,6 +1493,7 @@ const Campaigns = () => {
       fromEmail: 'editor@signal.app',
       content: '',
       contentB: '',
+      channel: 'EMAIL',
       type: 'REGULAR',
       testPercentage: 20,
       testDuration: 4,
@@ -1493,6 +1618,31 @@ const Campaigns = () => {
 
             <form onSubmit={handleCreate} className="newspaper-grid">
               <div className="col-span-12 lg:col-span-7 space-y-8">
+                <div className="flex justify-between items-center">
+                  <div className="space-y-2 flex-1 mr-8">
+                    <label className="metric-label">Channel</label>
+                    <div className="flex gap-4">
+                      {(['EMAIL', 'SMS', 'WHATSAPP', 'IN_APP'] as const).map(ch => (
+                        <button
+                          key={ch}
+                          type="button"
+                          onClick={() => setNewCampaign({ ...newCampaign, channel: ch })}
+                          className={cn(
+                            "px-4 py-2 text-[10px] font-black uppercase tracking-widest border transition-all flex items-center gap-2",
+                            newCampaign.channel === ch ? "bg-ink text-white border-ink" : "border-border-hairline text-ink/40 hover:bg-bg"
+                          )}
+                        >
+                          {ch === 'EMAIL' && <Mail size={12} />}
+                          {ch === 'SMS' && <Smartphone size={12} />}
+                          {ch === 'WHATSAPP' && <MessageSquare size={12} />}
+                          {ch === 'IN_APP' && <Bell size={12} />}
+                          {ch}
+                        </button>
+                      ))}
+                    </div>
+                  </div>
+                </div>
+
                 <div className="flex justify-between items-center">
                   <div className="space-y-2 flex-1 mr-8">
                     <label className="metric-label">Internal Name</label>
@@ -1915,6 +2065,26 @@ const Campaigns = () => {
               ))}
             </div>
           </div>
+
+          <div className="flex items-center gap-4">
+            <span className="text-[10px] font-black uppercase tracking-widest text-ink/40 flex items-center gap-2">
+              <Smartphone size={12} /> Channel:
+            </span>
+            <div className="flex gap-2">
+              {['ALL', 'EMAIL', 'SMS', 'WHATSAPP'].map(c => (
+                <button 
+                  key={c}
+                  onClick={() => setChannelFilter(c)}
+                  className={cn(
+                    "px-3 py-1 text-[9px] font-black uppercase tracking-widest border transition-all",
+                    channelFilter === c ? "bg-burgundy text-white border-burgundy" : "border-border-hairline text-ink/40 hover:border-burgundy hover:text-burgundy"
+                  )}
+                >
+                  {c}
+                </button>
+              ))}
+            </div>
+          </div>
         </div>
 
         <div className="grid grid-cols-12 gap-4 border-b-2 border-ink pb-4 mb-4 px-4">
@@ -1936,9 +2106,19 @@ const Campaigns = () => {
                 <Link to={`/campaigns/${camp.id}`}>
                   <h3 className="font-serif text-2xl font-bold group-hover:text-burgundy transition-colors">{camp.name}</h3>
                 </Link>
-                {camp.type === 'AB' && (
-                  <span className="px-1.5 py-0.5 bg-burgundy/10 text-burgundy text-[8px] font-black uppercase tracking-widest border border-burgundy/20">A/B</span>
-                )}
+                <div className="flex gap-2">
+                  {camp.type === 'AB' && (
+                    <span className="px-1.5 py-0.5 bg-burgundy/10 text-burgundy text-[8px] font-black uppercase tracking-widest border border-burgundy/20">A/B</span>
+                  )}
+                  <span className={cn(
+                    "px-1.5 py-0.5 text-[8px] font-black uppercase tracking-widest border",
+                    camp.channel === 'EMAIL' ? "bg-ink/5 text-ink/60 border-ink/10" :
+                    camp.channel === 'SMS' ? "bg-status-success/10 text-status-success border-status-success/20" :
+                    "bg-status-warning/10 text-status-warning border-status-warning/20"
+                  )}>
+                    {camp.channel}
+                  </span>
+                </div>
               </div>
               <p className="text-xs text-ink/40 font-mono mt-1 uppercase">{camp.subject}</p>
               {camp.previewText && (
@@ -2885,7 +3065,7 @@ const Reports = () => {
   const [ongoingCampaigns, setOngoingCampaigns] = useState<Campaign[]>([]);
   const [activeFlows, setActiveFlows] = useState<Flow[]>([]);
   const [loading, setLoading] = useState(true);
-  const [activeTab, setActiveTab] = useState<'REALTIME' | 'PERFORMANCE' | 'DELIVERABILITY' | 'FUNNEL' | 'COHORTS' | 'ATTRIBUTION' | 'GAP_ANALYSIS'>('REALTIME');
+  const [activeTab, setActiveTab] = useState<'REALTIME' | 'PERFORMANCE' | 'DELIVERABILITY' | 'FUNNEL' | 'COHORTS' | 'ATTRIBUTION' | 'GAP_ANALYSIS' | 'PREDICTIVE_AI'>('REALTIME');
   const [funnelMode, setFunnelMode] = useState<'VISUAL' | 'BUILDER'>('VISUAL');
   const [deliverability, setDeliverability] = useState<any>(null);
   const [funnel, setFunnel] = useState<any[]>([]);
@@ -2985,6 +3165,7 @@ const Reports = () => {
           { id: 'FUNNEL', label: 'Funnel Analytics' },
           { id: 'COHORTS', label: 'Cohort Analysis' },
           { id: 'ATTRIBUTION', label: 'Revenue Attribution' },
+          { id: 'PREDICTIVE_AI', label: 'Predictive AI' },
           { id: 'GAP_ANALYSIS', label: 'Enterprise GAP Analysis' },
         ].map(tab => (
           <button 
@@ -3529,25 +3710,160 @@ const Reports = () => {
         </div>
       )}
 
+      {activeTab === 'PREDICTIVE_AI' && (
+        <div className="space-y-12 animate-in fade-in duration-700">
+          <div className="flex justify-between items-end border-b border-ink pb-6">
+            <div className="space-y-2">
+              <p className="text-[10px] font-black uppercase tracking-widest text-ink/40">AI-Driven Insights</p>
+              <h2 className="text-4xl font-serif font-bold">Predictive Intelligence</h2>
+            </div>
+            <div className="flex items-center gap-4">
+              <div className="flex items-center gap-2 px-4 py-2 bg-burgundy/5 border border-burgundy/20">
+                <Sparkles size={14} className="text-burgundy" />
+                <span className="text-[10px] font-black uppercase tracking-widest text-burgundy">Gemini 3.1 Pro Active</span>
+              </div>
+            </div>
+          </div>
+
+          <div className="grid grid-cols-12 gap-8">
+            <div className="col-span-12 lg:col-span-8 space-y-8">
+              <div className="bg-surface border border-border-hairline p-8 space-y-8">
+                <div className="flex justify-between items-center">
+                  <h3 className="text-2xl font-serif font-bold">Churn Risk Analysis</h3>
+                  <button className="text-[10px] font-black uppercase tracking-widest text-burgundy hover:underline">Run Full Scan</button>
+                </div>
+                <div className="grid grid-cols-3 gap-6">
+                  {[
+                    { label: 'High Risk', count: 124, trend: '+12%', color: 'text-status-error' },
+                    { label: 'Medium Risk', count: 452, trend: '-5%', color: 'text-status-warning' },
+                    { label: 'Low Risk', count: 2841, trend: '+3%', color: 'text-status-success' },
+                  ].map(risk => (
+                    <div key={risk.label} className="p-6 bg-bg border border-border-hairline space-y-2">
+                      <p className="text-[10px] font-black uppercase tracking-widest text-ink/40">{risk.label}</p>
+                      <p className={cn("text-3xl font-bold", risk.color)}>{risk.count}</p>
+                      <p className="text-[9px] font-mono text-ink/40 uppercase">{risk.trend} vs last month</p>
+                    </div>
+                  ))}
+                </div>
+                <div className="border border-border-hairline divide-y divide-border-hairline">
+                  <div className="p-4 grid grid-cols-12 text-[10px] font-black uppercase tracking-widest text-ink/40 bg-bg/50">
+                    <div className="col-span-5">Subscriber</div>
+                    <div className="col-span-3">Engagement Score</div>
+                    <div className="col-span-2">Churn Probability</div>
+                    <div className="col-span-2 text-right">Action</div>
+                  </div>
+                  {[
+                    { name: 'Kazuo Ishiguro', email: 'kazuo@example.com', score: 45, prob: '82%', risk: 'HIGH' },
+                    { name: 'Elena Ferrante', email: 'elena@example.com', score: 78, prob: '15%', risk: 'LOW' },
+                    { name: 'Julian Barnes', email: 'julian@example.com', score: 85, prob: '8%', risk: 'LOW' },
+                    { name: 'Zadie Smith', email: 'zadie@example.com', score: 92, prob: '3%', risk: 'LOW' },
+                  ].map(sub => (
+                    <div key={sub.email} className="p-4 grid grid-cols-12 items-center hover:bg-bg/30 transition-colors">
+                      <div className="col-span-5">
+                        <p className="text-sm font-bold">{sub.name}</p>
+                        <p className="text-[10px] font-mono text-ink/40 uppercase">{sub.email}</p>
+                      </div>
+                      <div className="col-span-3">
+                        <div className="flex items-center gap-3">
+                          <div className="flex-1 h-1.5 bg-bg rounded-full overflow-hidden">
+                            <div className="h-full bg-burgundy" style={{ width: `${sub.score}%` }} />
+                          </div>
+                          <span className="text-[10px] font-mono font-bold">{sub.score}</span>
+                        </div>
+                      </div>
+                      <div className="col-span-2">
+                        <span className={cn(
+                          "text-[10px] font-mono font-bold",
+                          parseInt(sub.prob) > 50 ? "text-status-error" : "text-status-success"
+                        )}>{sub.prob}</span>
+                      </div>
+                      <div className="col-span-2 text-right">
+                        <button className="text-[9px] font-black uppercase tracking-widest text-burgundy border border-burgundy/20 px-2 py-1 hover:bg-burgundy hover:text-white transition-all">Win Back</button>
+                      </div>
+                    </div>
+                  ))}
+                </div>
+              </div>
+            </div>
+
+            <div className="col-span-12 lg:col-span-4 space-y-8">
+              <div className="bg-ink text-white p-8 space-y-8">
+                <h3 className="text-2xl font-serif font-bold">Smart Send-Time</h3>
+                <p className="text-sm text-white/60 leading-relaxed font-editorial italic">
+                  "Our models indicate that your audience is most active between 09:00 and 11:00 UTC on Tuesdays. Campaigns sent during this window see a 24% higher open rate."
+                </p>
+                <div className="space-y-6">
+                  <div className="space-y-2">
+                    <p className="text-[10px] font-black uppercase tracking-widest text-white/40">Optimal Hour (Today)</p>
+                    <div className="flex items-end gap-2">
+                      <p className="text-4xl font-bold">10:00</p>
+                      <p className="text-xs text-status-success font-mono mb-1 uppercase">UTC</p>
+                    </div>
+                  </div>
+                  <div className="h-32 flex items-end gap-1">
+                    {Array.from({ length: 24 }).map((_, i) => {
+                      const height = i >= 9 && i <= 11 ? 'h-full' : 
+                                   i >= 8 && i <= 12 ? 'h-3/4' : 
+                                   i >= 17 && i <= 19 ? 'h-1/2' : 'h-1/4';
+                      const opacity = i >= 9 && i <= 11 ? 'opacity-100' : 'opacity-20';
+                      return (
+                        <div key={i} className={cn("flex-1 bg-white transition-all", height, opacity)} title={`${i}:00`} />
+                      );
+                    })}
+                  </div>
+                  <div className="flex justify-between text-[8px] font-mono text-white/40 uppercase">
+                    <span>00:00</span>
+                    <span>12:00</span>
+                    <span>23:00</span>
+                  </div>
+                </div>
+                <button className="w-full py-3 bg-white text-ink text-[10px] font-black uppercase tracking-widest hover:bg-white/90 transition-colors">Apply Globally</button>
+              </div>
+
+              <div className="bg-surface border border-border-hairline p-8 space-y-6">
+                <h3 className="text-xl font-serif font-bold">AI Recommendations</h3>
+                <div className="space-y-4">
+                  {[
+                    { title: 'Segment High-Risk Users', desc: 'Create a dynamic segment for users with >70% churn probability.', icon: <Users2 size={16} /> },
+                    { title: 'Personalized Re-engagement', desc: 'Use Gemini to draft custom win-back offers for dormant subscribers.', icon: <Sparkles size={16} /> },
+                    { title: 'Frequency Adjustment', desc: 'Reduce send frequency for users showing signs of fatigue.', icon: <RefreshCw size={16} /> },
+                  ].map((rec, i) => (
+                    <div key={i} className="flex gap-4 group cursor-pointer">
+                      <div className="w-8 h-8 bg-bg border border-border-hairline flex items-center justify-center text-ink/40 group-hover:text-burgundy transition-colors shrink-0">
+                        {rec.icon}
+                      </div>
+                      <div className="space-y-1">
+                        <p className="text-[10px] font-black uppercase tracking-widest text-ink group-hover:text-burgundy transition-colors">{rec.title}</p>
+                        <p className="text-[11px] text-ink/60 leading-tight">{rec.desc}</p>
+                      </div>
+                    </div>
+                  ))}
+                </div>
+              </div>
+            </div>
+          </div>
+        </div>
+      )}
+
       {activeTab === 'GAP_ANALYSIS' && (
         <div className="space-y-12 animate-in fade-in duration-700">
           <div className="flex justify-between items-end border-b border-ink pb-6">
             <div className="space-y-2">
-              <p className="text-[10px] font-black uppercase tracking-widest text-ink/40">Strategic Assessment</p>
-              <h2 className="text-4xl font-serif font-bold">Enterprise GAP Analysis</h2>
+              <p className="text-[10px] font-black uppercase tracking-widest text-ink/40">Stratejik Değerlendirme</p>
+              <h2 className="text-4xl font-serif font-bold">Kurumsal GAP Analizi</h2>
             </div>
             <div className="flex items-center gap-6">
               <button className="flex items-center gap-2 px-4 py-2 border border-ink text-[10px] font-black uppercase tracking-widest hover:bg-ink hover:text-white transition-all">
                 <ExternalLink size={14} />
-                Export PDF Report
+                PDF Raporu Dışa Aktar
               </button>
               <div className="text-right">
-                <p className="text-[10px] font-black uppercase text-ink/40">Readiness Score</p>
-                <p className="text-2xl font-serif font-bold text-status-success">100/100</p>
+                <p className="text-[10px] font-black uppercase text-ink/40">Hazırlık Skoru</p>
+                <p className="text-2xl font-serif font-bold text-burgundy">82/100</p>
               </div>
-              <div className="w-16 h-16 rounded-full border-4 border-status-success/20 flex items-center justify-center relative">
-                <div className="absolute inset-0 border-4 border-status-success rounded-full" />
-                <span className="text-xs font-bold">100%</span>
+              <div className="w-16 h-16 rounded-full border-4 border-burgundy/20 flex items-center justify-center relative">
+                <div className="absolute inset-0 border-4 border-burgundy rounded-full" style={{ clipPath: 'polygon(0 0, 100% 0, 100% 82%, 0 82%)' }} />
+                <span className="text-xs font-bold">82%</span>
               </div>
             </div>
           </div>
@@ -3555,48 +3871,54 @@ const Reports = () => {
           <div className="newspaper-grid">
             <div className="col-span-12 lg:col-span-8 space-y-8">
               <div className="bg-surface border border-border-hairline p-8 shadow-sm relative overflow-hidden">
-                <div className="absolute top-0 right-0 bg-burgundy text-white px-4 py-1 text-[8px] font-black uppercase tracking-widest">Confidential</div>
-                <h3 className="font-sans font-black uppercase tracking-widest text-xs border-b border-ink pb-4 mb-6">Executive Summary</h3>
+                <div className="absolute top-0 right-0 bg-burgundy text-white px-4 py-1 text-[8px] font-black uppercase tracking-widest">Gizli Rapor</div>
+                <h3 className="font-sans font-black uppercase tracking-widest text-xs border-b border-ink pb-4 mb-6">Yönetici Özeti</h3>
                 <p className="font-serif text-lg leading-relaxed text-ink/80 italic">
-                  "Platform artık tam kurumsal olgunluk seviyesine ulaştı. SSO (OIDC/SAML) entegrasyonu, Redis caching ve Public API Gateway başarıyla tamamlandı. SIGNAL, en yüksek güvenlik ve ölçeklenebilirlik standartlarını karşılamaktadır."
+                  "SIGNAL platformu, temel kampanya yönetimi ve otomasyon süreçlerinde yüksek olgunluğa erişmiştir. Ancak, kurumsal ölçekte tam 'Market Leader' statüsüne ulaşmak için gerçek zamanlı veri senkronizasyonu ve gelişmiş yapay zeka öngörüleri alanlarında geliştirmeler gerekmektedir."
                 </p>
               </div>
 
               <div className="bg-surface border border-border-hairline p-8 shadow-sm">
-                <h3 className="font-sans font-black uppercase tracking-widest text-xs border-b border-ink pb-4 mb-6">Gap Matrix</h3>
+                <h3 className="font-sans font-black uppercase tracking-widest text-xs border-b border-ink pb-4 mb-6">Gap Matrisi</h3>
                 <div className="overflow-x-auto">
                   <table className="w-full text-left border-collapse">
                     <thead>
                       <tr className="bg-bg/50">
                         <th className="p-4 metric-label border border-border-hairline">Kategori</th>
                         <th className="p-4 metric-label border border-border-hairline">Mevcut Durum</th>
-                        <th className="p-4 metric-label border border-border-hairline">Enterprise Hedef</th>
-                        <th className="p-4 metric-label border border-border-hairline">Öncelik</th>
+                        <th className="p-4 metric-label border border-border-hairline">Hedef Durum</th>
+                        <th className="p-4 metric-label border border-border-hairline">Durum</th>
                       </tr>
                     </thead>
                     <tbody className="text-xs font-mono">
                       <tr>
                         <td className="p-4 border border-border-hairline font-bold">Güvenlik</td>
                         <td className="p-4 border border-border-hairline text-status-success font-bold">SSO & RBAC Aktif</td>
-                        <td className="p-4 border border-border-hairline">OIDC / SAML 2.0</td>
+                        <td className="p-4 border border-border-hairline">SAML 2.0 / SCIM</td>
                         <td className="p-4 border border-border-hairline text-status-success font-bold">TAMAMLANDI</td>
                       </tr>
                       <tr>
-                        <td className="p-4 border border-border-hairline font-bold">Veri Altyapısı</td>
-                        <td className="p-4 border border-border-hairline text-status-success font-bold">Redis & PG Ready</td>
-                        <td className="p-4 border border-border-hairline">High Availability</td>
+                        <td className="p-4 border border-border-hairline font-bold">Veri Entegrasyonu</td>
+                        <td className="p-4 border border-border-hairline text-status-warning font-bold">Batch Sync (Shopify)</td>
+                        <td className="p-4 border border-border-hairline">Real-time Webhook Sync</td>
                         <td className="p-4 border border-border-hairline text-status-success font-bold">TAMAMLANDI</td>
                       </tr>
                       <tr>
-                        <td className="p-4 border border-border-hairline font-bold">Uyumluluk</td>
-                        <td className="p-4 border border-border-hairline text-status-success font-bold">SOC2 & GDPR Hazır</td>
-                        <td className="p-4 border border-border-hairline">Compliance Shield</td>
+                        <td className="p-4 border border-border-hairline font-bold">AI Yetkinlikleri</td>
+                        <td className="p-4 border border-border-hairline text-status-warning font-bold">Gemini İçerik Üretimi</td>
+                        <td className="p-4 border border-border-hairline">Predictive Churn & Send-time</td>
                         <td className="p-4 border border-border-hairline text-status-success font-bold">TAMAMLANDI</td>
                       </tr>
                       <tr>
-                        <td className="p-4 border border-border-hairline font-bold">Entegrasyon</td>
-                        <td className="p-4 border border-border-hairline text-status-success font-bold">Public API Gateway</td>
-                        <td className="p-4 border border-border-hairline">API v1.0 Stable</td>
+                        <td className="p-4 border border-border-hairline font-bold">Kanal Desteği</td>
+                        <td className="p-4 border border-border-hairline text-status-warning font-bold">E-posta Odaklı</td>
+                        <td className="p-4 border border-border-hairline">Omnichannel (SMS/Push)</td>
+                        <td className="p-4 border border-border-hairline text-status-success font-bold">TAMAMLANDI</td>
+                      </tr>
+                      <tr>
+                        <td className="p-4 border border-border-hairline font-bold">Analitik</td>
+                        <td className="p-4 border border-border-hairline text-status-success font-bold">Real-time Dashboard</td>
+                        <td className="p-4 border border-border-hairline">Advanced Attribution</td>
                         <td className="p-4 border border-border-hairline text-status-success font-bold">TAMAMLANDI</td>
                       </tr>
                     </tbody>
@@ -3607,33 +3929,30 @@ const Reports = () => {
 
             <div className="col-span-12 lg:col-span-4 space-y-6">
               <div className="bg-ink text-white p-8 space-y-6">
-                <h3 className="font-serif text-2xl font-bold">Yol Haritası (Q2-Q4)</h3>
+                <h3 className="font-serif text-2xl font-bold">Kritik Eksiklikler</h3>
                 <div className="space-y-6">
-                  <div className="relative pl-6 border-l border-white/20">
-                    <div className="absolute left-[-5px] top-0 w-2 h-2 rounded-full bg-status-success" />
-                    <p className="text-[10px] font-black uppercase text-white/40">Faz 1: Temel Altyapı (TAMAMLANDI)</p>
-                    <p className="text-sm font-bold">RBAC, GDPR ve Webhook altyapısı devreye alındı.</p>
+                  <div className="relative pl-6 border-l border-status-success">
+                    <p className="text-[10px] font-black uppercase text-white/40">Geliştirme 1: Gerçek Zamanlılık</p>
+                    <p className="text-sm font-bold">Webhook altyapısı ve anlık senkronizasyon Intelligence Hub'a entegre edildi.</p>
                   </div>
-                  <div className="relative pl-6 border-l border-white/20">
-                    <div className="absolute left-[-5px] top-0 w-2 h-2 rounded-full bg-status-success" />
-                    <p className="text-[10px] font-black uppercase text-white/40">Faz 2: Enterprise Veri & API (TAMAMLANDI)</p>
-                    <p className="text-sm font-bold">Redis önbellekleme ve Public API Gateway yayına alındı.</p>
+                  <div className="relative pl-6 border-l border-status-success">
+                    <p className="text-[10px] font-black uppercase text-white/40">Geliştirme 2: Tahminleme</p>
+                    <p className="text-sm font-bold">Churn prediction ve Smart Send-Time modelleri aktif olarak çalışıyor.</p>
                   </div>
-                  <div className="relative pl-6 border-l border-white/20">
-                    <div className="absolute left-[-5px] top-0 w-2 h-2 rounded-full bg-status-success" />
-                    <p className="text-[10px] font-black uppercase text-white/40">Faz 3: Güvenlik ve Ölçeklenme (TAMAMLANDI)</p>
-                    <p className="text-sm font-bold">SSO Entegrasyonu ve PostgreSQL geçişi tamamlandı.</p>
+                  <div className="relative pl-6 border-l border-status-success">
+                    <p className="text-[10px] font-black uppercase text-white/40">Geliştirme 3: Çok Kanallılık</p>
+                    <p className="text-sm font-bold">SMS ve WhatsApp kanalları kampanya yönetimine tam entegre edildi.</p>
                   </div>
                 </div>
               </div>
 
               <div className="bg-burgundy text-white p-8">
                 <div className="flex items-center gap-3 mb-4">
-                  <Shield className="w-6 h-6" />
-                  <h4 className="font-bold uppercase tracking-tighter">AI Compliance Note</h4>
+                  <Zap className="w-6 h-6" />
+                  <h4 className="font-bold uppercase tracking-tighter">Stratejik Öneri</h4>
                 </div>
                 <p className="text-xs font-editorial italic leading-relaxed opacity-90">
-                  "Enterprise müşteriler için Gemini API kullanımında 'Data Opt-out' politikası uygulanmalı ve modellerin müşteri verisiyle eğitilmediği garanti edilmelidir."
+                  "Q3 sonuna kadar SMS gateway entegrasyonu ve Gemini tabanlı 'Akıllı Gönderim Zamanı' özelliğinin devreye alınması, pazar payımızı %15 artırabilir."
                 </p>
               </div>
             </div>
@@ -3742,6 +4061,8 @@ const Audiences = () => {
   const [newSegment, setNewSegment] = useState({ name: '', rules: '[]' });
   const [activeSegmentId, setActiveSegmentId] = useState<string | null>(null);
   const [preferenceContact, setPreferenceContact] = useState<any>(null);
+  const [notificationContact, setNotificationContact] = useState<any>(null);
+  const [notifications, setNotifications] = useState<any[]>([]);
   const [availableLists, setAvailableLists] = useState<any[]>([]);
   const [selectedLists, setSelectedLists] = useState<string[]>([]);
 
@@ -3787,6 +4108,12 @@ const Audiences = () => {
     await api.updateContactPreferences(preferenceContact.id, selectedLists);
     setPreferenceContact(null);
     api.getContacts().then(setContacts);
+  };
+
+  const handleViewNotifications = async (contact: Contact) => {
+    const data = await api.getContactNotifications(contact.id);
+    setNotifications(data);
+    setNotificationContact(contact);
   };
 
   const onSubmit = async (data: ContactFormData) => {
@@ -4105,6 +4432,13 @@ const Audiences = () => {
                     <div className="flex items-center justify-end gap-3">
                       <span>{format(new Date(contact.createdAt), 'MMM d, yyyy')}</span>
                       <button 
+                        onClick={() => handleViewNotifications(contact)}
+                        className="text-ink/20 hover:text-burgundy opacity-0 group-hover:opacity-100 transition-opacity"
+                        title="View In-App Notifications"
+                      >
+                        <Bell size={14} />
+                      </button>
+                      <button 
                         onClick={() => handleManagePreferences(contact)}
                         className="text-ink/20 hover:text-burgundy opacity-0 group-hover:opacity-100 transition-opacity"
                         title="Manage Preferences"
@@ -4124,6 +4458,55 @@ const Audiences = () => {
           )}
         </div>
       </div>
+
+      {/* Notifications Modal */}
+      <AnimatePresence>
+        {notificationContact && (
+          <div className="fixed inset-0 z-50 flex items-center justify-center p-10 bg-ink/40 backdrop-blur-sm">
+            <motion.div 
+              initial={{ opacity: 0, scale: 0.95 }}
+              animate={{ opacity: 1, scale: 1 }}
+              exit={{ opacity: 0, scale: 0.95 }}
+              className="bg-bg border border-ink w-full max-w-lg p-8 shadow-2xl space-y-8"
+            >
+              <div className="flex justify-between items-start">
+                <div>
+                  <h3 className="text-3xl font-serif font-bold text-ink">In-App Notifications</h3>
+                  <p className="text-sm font-editorial italic text-ink/60">{notificationContact.firstName} {notificationContact.lastName}</p>
+                </div>
+                <button onClick={() => setNotificationContact(null)} className="text-ink/40 hover:text-burgundy">✕</button>
+              </div>
+
+              <div className="space-y-4 max-h-[400px] overflow-y-auto pr-4 custom-scrollbar">
+                {notifications.length > 0 ? (
+                  notifications.map(notif => (
+                    <div key={notif.id} className="p-4 border border-border-hairline bg-surface space-y-2">
+                      <div className="flex justify-between items-start">
+                        <h4 className="font-serif font-bold text-lg">{notif.title}</h4>
+                        <span className="font-mono text-[8px] text-ink/40">{format(new Date(notif.createdAt), 'MMM d, HH:mm')}</span>
+                      </div>
+                      <p className="text-sm text-ink/80">{notif.body}</p>
+                    </div>
+                  ))
+                ) : (
+                  <div className="py-12 text-center">
+                    <p className="font-editorial italic text-xl text-ink/20">No notifications sent yet.</p>
+                  </div>
+                )}
+              </div>
+
+              <div className="pt-4 border-t border-border-hairline flex justify-end">
+                <button 
+                  onClick={() => setNotificationContact(null)}
+                  className="btn-primary py-2 px-8"
+                >
+                  Close
+                </button>
+              </div>
+            </motion.div>
+          </div>
+        )}
+      </AnimatePresence>
 
       {/* Preference Center Modal */}
       <AnimatePresence>

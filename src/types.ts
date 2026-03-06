@@ -171,6 +171,7 @@ export interface Campaign {
   fromEmail: string;
   replyTo?: string;
   content: string;
+  channel: 'EMAIL' | 'SMS' | 'WHATSAPP' | 'IN_APP';
   subjectB?: string;
   contentB?: string;
   testPercentage?: number;
