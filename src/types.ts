@@ -193,6 +193,7 @@ export interface Flow {
   status: 'DRAFT' | 'ACTIVE' | 'PAUSED';
   nodes: string; // JSON string
   edges: string; // JSON string
+  scheduledAt?: string;
   organizationId: string;
   createdAt: string;
   updatedAt: string;

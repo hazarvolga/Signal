@@ -367,6 +367,7 @@ model Flow {
   status         String       @default("DRAFT") // DRAFT, ACTIVE, PAUSED
   nodes          String       @default("[]") // JSON string for React Flow nodes
   edges          String       @default("[]") // JSON string for React Flow edges
+  scheduledAt    DateTime?
   organizationId String
   organization   Organization @relation(fields: [organizationId], references: [id])
   createdAt      DateTime     @default(now())

@@ -48,6 +48,13 @@ export const api = {
     return res.json();
   },
 
+  async deleteCampaign(id: string): Promise<{ success: boolean }> {
+    const res = await fetch(`/api/campaigns/${id}`, {
+      method: 'DELETE',
+    });
+    return res.json();
+  },
+
   async getTemplates(): Promise<Template[]> {
     const res = await fetch('/api/templates');
     return res.json();

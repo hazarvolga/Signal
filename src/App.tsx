@@ -56,7 +56,9 @@ import {
   LayoutTemplate,
   StepForward,
   RotateCcw,
-  Trophy
+  Trophy,
+  Archive,
+  FileEdit
 } from 'lucide-react';
 import { motion, AnimatePresence } from 'motion/react';
 import { GoogleGenAI } from "@google/genai";
@@ -1879,7 +1881,7 @@ const Campaigns = () => {
               <Filter size={12} /> Status:
             </span>
             <div className="flex gap-2">
-              {['ALL', 'DRAFT', 'IN_REVIEW', 'SCHEDULED', 'SENT'].map(s => (
+              {['ALL', 'DRAFT', 'IN_REVIEW', 'SCHEDULED', 'SENT', 'ARCHIVED'].map(s => (
                 <button 
                   key={s}
                   onClick={() => setStatusFilter(s)}
@@ -1948,15 +1950,23 @@ const Campaigns = () => {
               <p className="font-mono text-[9px] text-ink/40 uppercase">{camp.fromEmail}</p>
             </div>
             <div className="col-span-2">
-              <span className={cn(
-                "px-2 py-0.5 text-[9px] font-black uppercase tracking-widest border",
-                camp.status === 'SENT' ? "border-status-success text-status-success" :
-                camp.status === 'SCHEDULED' ? "border-status-scheduled text-status-scheduled" :
-                camp.status === 'IN_REVIEW' ? "border-burgundy text-burgundy" :
-                "border-status-draft text-status-draft"
+              <div className={cn(
+                "px-2 py-1 text-[9px] font-black uppercase tracking-widest border flex items-center gap-1.5 w-fit",
+                camp.status === 'SENT' ? "border-status-success/30 bg-status-success/5 text-status-success" :
+                camp.status === 'SCHEDULED' ? "border-status-scheduled/30 bg-status-scheduled/5 text-status-scheduled" :
+                camp.status === 'IN_REVIEW' ? "border-burgundy/30 bg-burgundy/5 text-burgundy" :
+                camp.status === 'ARCHIVED' ? "border-ink/10 bg-ink/5 text-ink/40" :
+                camp.status === 'SENDING' ? "border-status-warning/30 bg-status-warning/5 text-status-warning" :
+                "border-status-draft/30 bg-status-draft/5 text-status-draft"
               )}>
+                {camp.status === 'SENT' && <CheckCircle2 size={10} />}
+                {camp.status === 'SCHEDULED' && <Clock size={10} />}
+                {camp.status === 'IN_REVIEW' && <ShieldCheck size={10} />}
+                {camp.status === 'ARCHIVED' && <Archive size={10} />}
+                {camp.status === 'SENDING' && <RefreshCw size={10} className="animate-spin" />}
+                {camp.status === 'DRAFT' && <FileEdit size={10} />}
                 {camp.status.replace('_', ' ')}
-              </span>
+              </div>
             </div>
             <div className="col-span-2 space-y-1">
               <div className="flex justify-between text-[9px] font-mono text-ink/40">
@@ -2007,6 +2017,48 @@ const Campaigns = () => {
                   title="Send Now"
                 >
                   <Send size={18} />
+                </button>
+              )}
+              {camp.status === 'ARCHIVED' && (
+                <button 
+                  onClick={async () => {
+                    if (confirm("Restore this broadcast to Draft?")) {
+                      await api.updateCampaignStatus(camp.id, 'DRAFT');
+                      api.getCampaigns().then(setCampaigns);
+                    }
+                  }}
+                  className="text-ink/20 hover:text-burgundy"
+                  title="Restore to Draft"
+                >
+                  <RotateCcw size={18} />
+                </button>
+              )}
+              {camp.status === 'DRAFT' && (
+                <button 
+                  onClick={async () => {
+                    if (confirm("Permanently delete this draft?")) {
+                      await api.deleteCampaign(camp.id);
+                      api.getCampaigns().then(setCampaigns);
+                    }
+                  }}
+                  className="text-ink/20 hover:text-burgundy"
+                  title="Delete Draft"
+                >
+                  <Trash2 size={18} />
+                </button>
+              )}
+              {camp.status !== 'ARCHIVED' && camp.status !== 'DRAFT' && (
+                <button 
+                  onClick={async () => {
+                    if (confirm("Archive this broadcast?")) {
+                      await api.updateCampaignStatus(camp.id, 'ARCHIVED');
+                      api.getCampaigns().then(setCampaigns);
+                    }
+                  }}
+                  className="text-ink/20 hover:text-burgundy"
+                  title="Archive"
+                >
+                  <Archive size={18} />
                 </button>
               )}
               {camp.type === 'AB' && (
@@ -2830,32 +2882,89 @@ const FunnelBuilder = ({ initialSteps }: { initialSteps: any[] }) => {
 
 const Reports = () => {
   const [campaigns, setCampaigns] = useState<Campaign[]>([]);
+  const [ongoingCampaigns, setOngoingCampaigns] = useState<Campaign[]>([]);
+  const [activeFlows, setActiveFlows] = useState<Flow[]>([]);
   const [loading, setLoading] = useState(true);
-  const [activeTab, setActiveTab] = useState<'PERFORMANCE' | 'DELIVERABILITY' | 'FUNNEL' | 'COHORTS' | 'ATTRIBUTION' | 'GAP_ANALYSIS'>('PERFORMANCE');
+  const [activeTab, setActiveTab] = useState<'REALTIME' | 'PERFORMANCE' | 'DELIVERABILITY' | 'FUNNEL' | 'COHORTS' | 'ATTRIBUTION' | 'GAP_ANALYSIS'>('REALTIME');
   const [funnelMode, setFunnelMode] = useState<'VISUAL' | 'BUILDER'>('VISUAL');
   const [deliverability, setDeliverability] = useState<any>(null);
   const [funnel, setFunnel] = useState<any[]>([]);
   const [cohorts, setCohorts] = useState<any[]>([]);
   const [attribution, setAttribution] = useState<any[]>([]);
   const [attributionModel, setAttributionModel] = useState<'LAST_CLICK' | 'FIRST_CLICK' | 'LINEAR'>('LAST_CLICK');
+  const [realtimeData, setRealtimeData] = useState<any[]>([]);
+  const [liveEvents, setLiveEvents] = useState<any[]>([]);
 
   useEffect(() => {
     const fetchData = async () => {
-      const [camps, deliv, fun, coh, attr] = await Promise.all([
+      const [camps, flows, deliv, fun, coh, attr] = await Promise.all([
         api.getCampaigns(),
+        api.getFlows(),
         api.getDeliverabilityAnalytics(),
         api.getFunnelAnalytics(),
         api.getCohortAnalytics(),
         api.getRevenueAttribution(attributionModel)
       ]);
       setCampaigns(camps.filter(c => c.status === 'SENT'));
+      setOngoingCampaigns(camps.filter(c => c.status === 'SENDING' || c.status === 'SCHEDULED'));
+      setActiveFlows(flows.filter(f => f.status === 'ACTIVE'));
       setDeliverability(deliv);
       setFunnel(fun);
       setCohorts(coh);
       setAttribution(attr);
+      
+      // Mock real-time data
+      const mockRealtime = Array.from({ length: 20 }, (_, i) => ({
+        time: format(new Date(Date.now() - (19 - i) * 60000), 'HH:mm'),
+        opens: Math.floor(Math.random() * 50) + 10,
+        clicks: Math.floor(Math.random() * 20) + 5,
+        conversions: Math.floor(Math.random() * 5)
+      }));
+      setRealtimeData(mockRealtime);
+
+      const mockEvents = [
+        { user: 'Sarah K.', action: 'Opened "Spring Collection"', time: 'Just now', icon: <Eye size={12} />, type: 'OPEN' },
+        { user: 'John D.', action: 'Clicked "Buy Now"', time: '2m ago', icon: <MousePointerClick size={12} />, type: 'CLICK' },
+        { user: 'Elena R.', action: 'Purchased "Linen Shirt"', time: '4m ago', icon: <ShoppingBag size={12} />, type: 'CONVERSION' },
+        { user: 'Marcus T.', action: 'Joined "VIP Segment"', time: '7m ago', icon: <Users2 size={12} />, type: 'JOIN' },
+      ];
+      setLiveEvents(mockEvents);
+      
       setLoading(false);
     };
     fetchData();
+
+    const interval = setInterval(() => {
+      setRealtimeData(prev => {
+        const next = [...prev.slice(1), {
+          time: format(new Date(), 'HH:mm'),
+          opens: Math.floor(Math.random() * 50) + 10,
+          clicks: Math.floor(Math.random() * 20) + 5,
+          conversions: Math.floor(Math.random() * 5)
+        }];
+        return next;
+      });
+
+      // Update live events occasionally
+      if (Math.random() > 0.7) {
+        const users = ['Alice W.', 'Bob M.', 'Charlie P.', 'Diana L.', 'Edward S.'];
+        const actions = [
+          { label: 'Opened "Weekly Digest"', icon: <Eye size={12} />, type: 'OPEN' },
+          { label: 'Clicked "Read More"', icon: <MousePointerClick size={12} />, type: 'CLICK' },
+          { label: 'Unsubscribed', icon: <X size={12} />, type: 'UNSUBSCRIBE' },
+          { label: 'Completed Flow', icon: <CheckCircle2 size={12} />, type: 'FLOW' }
+        ];
+        const randomUser = users[Math.floor(Math.random() * users.length)];
+        const randomAction = actions[Math.floor(Math.random() * actions.length)];
+        
+        setLiveEvents(prev => [
+          { user: randomUser, action: randomAction.label, time: 'Just now', icon: randomAction.icon, type: randomAction.type },
+          ...prev.slice(0, 5)
+        ]);
+      }
+    }, 5000);
+
+    return () => clearInterval(interval);
   }, [attributionModel]);
 
   if (loading) return <div className="p-20 text-center font-editorial italic text-3xl">Loading Intelligence Hub...</div>;
@@ -2868,8 +2977,9 @@ const Reports = () => {
         guideKey="reports-analytics"
       />
 
-      <div className="flex gap-8 border-b border-ink pb-2">
+      <div className="flex gap-8 border-b border-ink pb-2 overflow-x-auto no-scrollbar">
         {[
+          { id: 'REALTIME', label: 'Real-time Dashboard' },
           { id: 'PERFORMANCE', label: 'Broadcast Performance' },
           { id: 'DELIVERABILITY', label: 'Deliverability' },
           { id: 'FUNNEL', label: 'Funnel Analytics' },
@@ -2892,6 +3002,169 @@ const Reports = () => {
           </button>
         ))}
       </div>
+
+      {activeTab === 'REALTIME' && (
+        <div className="space-y-12">
+          <div className="grid grid-cols-1 md:grid-cols-4 gap-8">
+            <div className="bg-surface border border-border-hairline p-8 space-y-2 relative overflow-hidden group">
+              <div className="absolute top-0 right-0 p-2">
+                <div className="w-2 h-2 bg-status-success rounded-full animate-pulse" />
+              </div>
+              <p className="metric-label">Active Signals</p>
+              <p className="text-4xl font-serif font-bold">1,420</p>
+              <p className="text-[10px] font-mono text-ink/40 uppercase">Live in last 5 mins</p>
+              <div className="absolute bottom-0 left-0 w-full h-1 bg-status-success/10">
+                <motion.div 
+                  initial={{ width: 0 }}
+                  animate={{ width: '65%' }}
+                  className="h-full bg-status-success"
+                />
+              </div>
+            </div>
+            <div className="bg-surface border border-border-hairline p-8 space-y-2">
+              <p className="metric-label">Real-time Opens</p>
+              <p className="text-4xl font-serif font-bold">{realtimeData.reduce((acc, d) => acc + d.opens, 0)}</p>
+              <p className="text-[10px] font-mono text-ink/40 uppercase">Last 20 minutes</p>
+            </div>
+            <div className="bg-surface border border-border-hairline p-8 space-y-2">
+              <p className="metric-label">Real-time Clicks</p>
+              <p className="text-4xl font-serif font-bold">{realtimeData.reduce((acc, d) => acc + d.clicks, 0)}</p>
+              <p className="text-[10px] font-mono text-ink/40 uppercase">Last 20 minutes</p>
+            </div>
+            <div className="bg-surface border border-border-hairline p-8 space-y-2">
+              <p className="metric-label">Active Automations</p>
+              <p className="text-4xl font-serif font-bold">{activeFlows.length}</p>
+              <p className="text-[10px] font-mono text-ink/40 uppercase">Currently processing</p>
+            </div>
+          </div>
+
+          <div className="grid grid-cols-12 gap-8">
+            <div className="col-span-12 lg:col-span-8 space-y-8">
+              <div className="bg-surface border border-border-hairline p-8">
+                <div className="flex justify-between items-center mb-8 border-b border-ink pb-4">
+                  <h3 className="font-sans font-black uppercase tracking-widest text-xs">Live Engagement Stream</h3>
+                  <div className="flex items-center gap-2 text-[10px] font-mono uppercase text-ink/40">
+                    <RefreshCw size={12} className="animate-spin" />
+                    Updating Live
+                  </div>
+                </div>
+                <div className="h-80">
+                  <ResponsiveContainer width="100%" height="100%">
+                    <AreaChart data={realtimeData}>
+                      <CartesianGrid strokeDasharray="3 3" stroke="#D4CFC6" vertical={false} />
+                      <XAxis dataKey="time" stroke="#1A1814" fontSize={10} tickLine={false} axisLine={false} />
+                      <YAxis stroke="#1A1814" fontSize={10} tickLine={false} axisLine={false} />
+                      <Tooltip 
+                        contentStyle={{ backgroundColor: '#F5F2EC', border: '1px solid #1A1814', borderRadius: 0 }}
+                        itemStyle={{ fontSize: '10px', textTransform: 'uppercase', fontWeight: 'bold' }}
+                      />
+                      <Area type="monotone" dataKey="opens" stroke="#8B0000" fill="#8B0000" fillOpacity={0.1} strokeWidth={2} />
+                      <Area type="monotone" dataKey="clicks" stroke="#2D5A27" fill="#2D5A27" fillOpacity={0.1} strokeWidth={2} />
+                      <Area type="monotone" dataKey="conversions" stroke="#C9A84C" fill="#C9A84C" fillOpacity={0.1} strokeWidth={2} />
+                    </AreaChart>
+                  </ResponsiveContainer>
+                </div>
+              </div>
+
+              <div className="bg-surface border border-border-hairline p-8">
+                <h3 className="font-sans font-black uppercase tracking-widest text-xs border-b border-ink pb-4 mb-6">Ongoing Dispatches</h3>
+                {ongoingCampaigns.length > 0 ? (
+                  <div className="space-y-6">
+                    {ongoingCampaigns.map(camp => (
+                      <div key={camp.id} className="space-y-3">
+                        <div className="flex justify-between items-end">
+                          <div>
+                            <p className="text-xs font-bold">{camp.name}</p>
+                            <p className="text-[10px] font-mono text-ink/40 uppercase">Status: <span className="text-burgundy">{camp.status}</span></p>
+                          </div>
+                          <p className="text-[10px] font-mono text-ink/40 uppercase">Progress: 64%</p>
+                        </div>
+                        <div className="h-1.5 bg-bg border border-border-hairline overflow-hidden">
+                          <motion.div 
+                            initial={{ width: 0 }}
+                            animate={{ width: '64%' }}
+                            className="h-full bg-burgundy"
+                          />
+                        </div>
+                        <div className="flex gap-4 text-[9px] font-mono text-ink/40 uppercase">
+                          <span>Sent: 12,400</span>
+                          <span>Delivered: 12,380</span>
+                          <span>Bounced: 20</span>
+                        </div>
+                      </div>
+                    ))}
+                  </div>
+                ) : (
+                  <p className="text-center py-10 font-editorial italic text-ink/20">No dispatches currently in flight.</p>
+                )}
+              </div>
+            </div>
+
+            <div className="col-span-12 lg:col-span-4 space-y-8">
+              <div className="bg-surface border border-border-hairline p-8">
+                <h3 className="font-sans font-black uppercase tracking-widest text-xs border-b border-ink pb-4 mb-6 flex items-center justify-between">
+                  Live Activity Ticker
+                  <span className="flex h-2 w-2 relative">
+                    <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-burgundy opacity-75"></span>
+                    <span className="relative inline-flex rounded-full h-2 w-2 bg-burgundy"></span>
+                  </span>
+                </h3>
+                <div className="space-y-4 max-h-[400px] overflow-y-auto no-scrollbar">
+                  <AnimatePresence initial={false}>
+                    {liveEvents.map((item, i) => (
+                      <motion.div 
+                        key={`${item.user}-${i}`}
+                        initial={{ opacity: 0, x: 20 }}
+                        animate={{ opacity: 1, x: 0 }}
+                        exit={{ opacity: 0, x: -20 }}
+                        className="flex items-center justify-between py-3 border-b border-border-hairline last:border-0"
+                      >
+                        <div className="flex items-center gap-3">
+                          <div className={cn(
+                            "w-8 h-8 flex items-center justify-center",
+                            item.type === 'CONVERSION' ? "bg-brass text-white" : "bg-burgundy/10 text-burgundy"
+                          )}>
+                            {item.icon}
+                          </div>
+                          <div>
+                            <p className="text-xs font-bold">{item.user}</p>
+                            <p className="text-[10px] text-ink/60 italic">{item.action}</p>
+                          </div>
+                        </div>
+                        <span className="text-[9px] font-mono text-ink/40 uppercase whitespace-nowrap">{item.time}</span>
+                      </motion.div>
+                    ))}
+                  </AnimatePresence>
+                </div>
+              </div>
+
+              <div className="bg-surface border border-border-hairline p-8">
+                <h3 className="font-sans font-black uppercase tracking-widest text-xs border-b border-ink pb-4 mb-6">Automation Health</h3>
+                <div className="space-y-6">
+                  {activeFlows.slice(0, 4).map((flow, i) => (
+                    <div key={flow.id} className="space-y-2">
+                      <div className="flex justify-between items-center">
+                        <p className="text-xs font-bold">{flow.name}</p>
+                        <span className="text-[9px] font-black uppercase px-1.5 py-0.5 rounded bg-status-success/10 text-status-success">Healthy</span>
+                      </div>
+                      <div className="h-1 bg-ink/5 rounded-full overflow-hidden">
+                        <motion.div 
+                          initial={{ width: 0 }}
+                          animate={{ width: `${Math.floor(Math.random() * 40) + 40}%` }}
+                          className="h-full bg-ink transition-all duration-1000" 
+                        />
+                      </div>
+                    </div>
+                  ))}
+                  {activeFlows.length === 0 && (
+                    <p className="text-center py-4 font-editorial italic text-ink/20 text-sm">No active automations.</p>
+                  )}
+                </div>
+              </div>
+            </div>
+          </div>
+        </div>
+      )}
 
       {activeTab === 'PERFORMANCE' && (
         <div className="space-y-12">
@@ -5393,6 +5666,49 @@ const Automations = () => {
               <Play size={14} />
               Simulate
             </button>
+            <div className="relative group">
+              <button 
+                className={cn(
+                  "flex items-center gap-2 px-3 py-1 border text-[10px] font-bold uppercase transition-colors",
+                  activeFlow.scheduledAt ? "bg-emerald-500 text-white border-emerald-500" : "bg-white text-ink border-border-hairline hover:border-ink"
+                )}
+              >
+                <Clock size={14} />
+                {activeFlow.scheduledAt ? `Scheduled: ${new Date(activeFlow.scheduledAt).toLocaleDateString()}` : "Schedule Start"}
+              </button>
+              <div className="absolute right-0 top-full mt-2 w-64 bg-surface border border-border-hairline p-4 shadow-xl opacity-0 invisible group-hover:opacity-100 group-hover:visible transition-all z-[60]">
+                <p className="text-[10px] font-black uppercase tracking-widest text-ink/40 mb-3">Workflow Schedule</p>
+                <div className="space-y-3">
+                  <div className="space-y-1">
+                    <label className="text-[9px] font-bold uppercase">Start Date & Time</label>
+                    <input 
+                      type="datetime-local"
+                      className="w-full bg-bg border border-border-hairline p-2 text-xs"
+                      value={activeFlow.scheduledAt || ''}
+                      onChange={(e) => {
+                        const updated = { ...activeFlow, scheduledAt: e.target.value };
+                        setActiveFlow(updated);
+                        api.updateFlow(activeFlow.id, { scheduledAt: e.target.value });
+                        setFlows(flows.map(f => f.id === activeFlow.id ? updated : f));
+                      }}
+                    />
+                  </div>
+                  {activeFlow.scheduledAt && (
+                    <button 
+                      onClick={() => {
+                        const updated = { ...activeFlow, scheduledAt: undefined };
+                        setActiveFlow(updated);
+                        api.updateFlow(activeFlow.id, { scheduledAt: null as any });
+                        setFlows(flows.map(f => f.id === activeFlow.id ? updated : f));
+                      }}
+                      className="w-full py-2 text-[9px] font-bold uppercase text-burgundy hover:bg-burgundy/5"
+                    >
+                      Remove Schedule
+                    </button>
+                  )}
+                </div>
+              </div>
+            </div>
             {validationErrors.length > 0 && (
               <div className="flex items-center gap-2 px-3 py-1 bg-burgundy/10 border border-burgundy/20 text-burgundy text-[10px] font-bold uppercase">
                 <AlertCircle size={14} />
@@ -5780,6 +6096,71 @@ const Automations = () => {
                     </div>
                   </div>
 
+                  <div className="space-y-4 pt-4 border-t border-border-hairline">
+                    <div className="flex items-center justify-between">
+                      <p className="text-[10px] font-black uppercase tracking-widest text-ink/40">Step Schedule</p>
+                      <button 
+                        onClick={() => updateNodeConfig(selectedNode.id, { hasStepSchedule: !selectedNode.data.config?.hasStepSchedule })}
+                        className={cn(
+                          "text-[8px] font-bold uppercase px-2 py-0.5 border transition-colors",
+                          selectedNode.data.config?.hasStepSchedule ? "bg-emerald-500 text-white border-emerald-500" : "text-ink/40 border-border-hairline hover:border-ink"
+                        )}
+                      >
+                        {selectedNode.data.config?.hasStepSchedule ? "Enabled" : "Disabled"}
+                      </button>
+                    </div>
+                    {selectedNode.data.config?.hasStepSchedule && (
+                      <div className="space-y-3 p-3 bg-emerald-50/50 border border-emerald-100">
+                        <div className="space-y-1">
+                          <label className="text-[9px] font-bold uppercase">Execution Time</label>
+                          <select 
+                            className="w-full bg-white border border-border-hairline p-2 text-xs"
+                            value={selectedNode.data.config?.stepScheduleType || 'delay'}
+                            onChange={(e) => updateNodeConfig(selectedNode.id, { stepScheduleType: e.target.value })}
+                          >
+                            <option value="delay">Relative Delay</option>
+                            <option value="fixed">Fixed Date/Time</option>
+                          </select>
+                        </div>
+                        {selectedNode.data.config?.stepScheduleType === 'fixed' ? (
+                          <div className="space-y-1">
+                            <label className="text-[9px] font-bold uppercase">Run At</label>
+                            <input 
+                              type="datetime-local"
+                              className="w-full bg-white border border-border-hairline p-2 text-xs"
+                              value={selectedNode.data.config?.stepScheduledAt || ''}
+                              onChange={(e) => updateNodeConfig(selectedNode.id, { stepScheduledAt: e.target.value })}
+                            />
+                          </div>
+                        ) : (
+                          <div className="grid grid-cols-2 gap-2">
+                            <div className="space-y-1">
+                              <label className="text-[9px] font-bold uppercase">Delay</label>
+                              <input 
+                                type="number"
+                                className="w-full bg-white border border-border-hairline p-2 text-xs"
+                                value={selectedNode.data.config?.stepDelay || 0}
+                                onChange={(e) => updateNodeConfig(selectedNode.id, { stepDelay: parseInt(e.target.value) })}
+                              />
+                            </div>
+                            <div className="space-y-1">
+                              <label className="text-[9px] font-bold uppercase">Unit</label>
+                              <select 
+                                className="w-full bg-white border border-border-hairline p-2 text-xs"
+                                value={selectedNode.data.config?.stepDelayUnit || 'hours'}
+                                onChange={(e) => updateNodeConfig(selectedNode.id, { stepDelayUnit: e.target.value })}
+                              >
+                                <option value="minutes">Min</option>
+                                <option value="hours">Hrs</option>
+                                <option value="days">Days</option>
+                              </select>
+                            </div>
+                          </div>
+                        )}
+                      </div>
+                    )}
+                  </div>
+
                   {/* Specific Configuration Forms */}
                   {selectedNode.data.label === 'Send Email' && (
                     <div className="space-y-4">
@@ -5976,8 +6357,32 @@ const Automations = () => {
                           <span className="text-xs font-mono font-bold w-12">{selectedNode.data.config?.splitPercentage || 50}%</span>
                         </div>
                       </div>
+                      
+                      <div className="space-y-2">
+                        <label className="text-[9px] font-bold uppercase">Winner Criteria</label>
+                        <select 
+                          className="w-full bg-bg border border-border-hairline p-2 text-xs"
+                          value={selectedNode.data.config?.winnerCriteria || 'OPEN_RATE'}
+                          onChange={(e) => updateNodeConfig(selectedNode.id, { winnerCriteria: e.target.value })}
+                        >
+                          <option value="OPEN_RATE">Highest Open Rate</option>
+                          <option value="CLICK_RATE">Highest Click Rate</option>
+                          <option value="REVENUE">Highest Revenue</option>
+                        </select>
+                      </div>
+
+                      <div className="space-y-2">
+                        <label className="text-[9px] font-bold uppercase">Test Duration (Hours)</label>
+                        <input 
+                          type="number"
+                          className="w-full bg-bg border border-border-hairline p-2 text-xs"
+                          value={selectedNode.data.config?.testDuration || 24}
+                          onChange={(e) => updateNodeConfig(selectedNode.id, { testDuration: parseInt(e.target.value) })}
+                        />
+                      </div>
+
                       <div className="p-3 bg-bg border border-border-hairline text-[10px] text-ink/60 italic">
-                        Contacts will be randomly split between Path A and Path B based on this percentage.
+                        Contacts will be randomly split between Path A and Path B. After the duration, the winner will be determined based on the selected criteria.
                       </div>
                     </div>
                   )}

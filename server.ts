@@ -1077,6 +1077,13 @@ async function startServer() {
     res.json(campaign);
   });
 
+  app.delete("/api/campaigns/:id", async (req, res) => {
+    await prisma.campaign.delete({
+      where: { id: req.params.id },
+    });
+    res.json({ success: true });
+  });
+
   app.get("/api/campaigns/:id/analytics", async (req, res) => {
     const campaign = await prisma.campaign.findUnique({
       where: { id: req.params.id },
@@ -1249,13 +1256,14 @@ async function startServer() {
 
   app.post("/api/flows", async (req, res) => {
     const org = await prisma.organization.findFirst();
-    const { name, nodes, edges, status } = req.body;
+    const { name, nodes, edges, status, scheduledAt } = req.body;
     const flow = await prisma.flow.create({
       data: {
         name,
-        nodes: nodes ? JSON.stringify(nodes) : "[]",
-        edges: edges ? JSON.stringify(edges) : "[]",
+        nodes: nodes ? (typeof nodes === 'string' ? nodes : JSON.stringify(nodes)) : "[]",
+        edges: edges ? (typeof edges === 'string' ? edges : JSON.stringify(edges)) : "[]",
         status: status || "DRAFT",
+        scheduledAt: scheduledAt ? new Date(scheduledAt) : null,
         organizationId: org!.id,
       },
     });
@@ -1270,14 +1278,15 @@ async function startServer() {
   });
 
   app.patch("/api/flows/:id", async (req, res) => {
-    const { name, nodes, edges, status } = req.body;
+    const { name, nodes, edges, status, scheduledAt } = req.body;
     const flow = await prisma.flow.update({
       where: { id: req.params.id },
       data: {
         ...(name && { name }),
-        ...(nodes && { nodes: JSON.stringify(nodes) }),
-        ...(edges && { edges: JSON.stringify(edges) }),
+        ...(nodes && { nodes: typeof nodes === 'string' ? nodes : JSON.stringify(nodes) }),
+        ...(edges && { edges: typeof edges === 'string' ? edges : JSON.stringify(edges) }),
         ...(status && { status }),
+        ...(scheduledAt !== undefined && { scheduledAt: scheduledAt ? new Date(scheduledAt) : null }),
       },
     });
     res.json(flow);
