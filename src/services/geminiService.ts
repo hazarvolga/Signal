@@ -143,4 +143,32 @@ export const geminiService = {
       return { subject: "", content: "" };
     }
   },
+
+  async predictChurnRisk(contactData: any): Promise<{ riskLevel: 'LOW' | 'MEDIUM' | 'HIGH', probability: number, reasons: string[] }> {
+    const response = await ai.models.generateContent({
+      model: "gemini-3-flash-preview",
+      contents: `Analyze the following contact engagement data and predict their churn risk:
+      Data: ${JSON.stringify(contactData)}
+      
+      Provide a risk level (LOW, MEDIUM, HIGH), a probability (0-1), and a list of reasons.
+      Return as JSON with "riskLevel", "probability", and "reasons".`,
+      config: {
+        responseMimeType: "application/json",
+        responseSchema: {
+          type: Type.OBJECT,
+          properties: {
+            riskLevel: { type: Type.STRING, enum: ["LOW", "MEDIUM", "HIGH"] },
+            probability: { type: Type.NUMBER },
+            reasons: { type: Type.ARRAY, items: { type: Type.STRING } },
+          },
+          required: ["riskLevel", "probability", "reasons"],
+        },
+      },
+    });
+    try {
+      return JSON.parse(response.text || '{"riskLevel": "LOW", "probability": 0, "reasons": []}');
+    } catch (e) {
+      return { riskLevel: "LOW", probability: 0, reasons: [] };
+    }
+  },
 };

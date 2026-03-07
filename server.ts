@@ -1500,6 +1500,18 @@ app.post("/api/ai/adjust-tone", async (req, res) => {
   res.json({ content: rewritten });
 });
 
+app.post("/api/ai/predict-churn", async (req, res) => {
+  const { contactId } = req.body;
+  const contact = await prisma.contact.findUnique({
+    where: { id: contactId },
+    include: { events: true, engagement: true }
+  });
+  if (!contact) return res.status(404).json({ error: "Contact not found" });
+
+  const risk = await geminiService.predictChurnRisk(contact);
+  res.json(risk);
+});
+
 app.post("/api/ai/translate", async (req, res) => {
   const { content, language } = req.body;
   const translated = await geminiService.translateContent(content, language);
@@ -1706,6 +1718,23 @@ app.get("/api/integrations", async (req, res) => {
   const org = await prisma.organization.findFirst();
   const integrations = await prisma.integration.findMany({ where: { organizationId: org?.id } });
   res.json(integrations);
+});
+
+app.patch("/api/integrations/:id", async (req, res) => {
+  const { id } = req.params;
+  const { status, config } = req.body;
+  try {
+    const integration = await prisma.integration.update({
+      where: { id },
+      data: { 
+        status, 
+        config: typeof config === 'string' ? config : JSON.stringify(config) 
+      }
+    });
+    res.json(integration);
+  } catch (error) {
+    res.status(500).json({ error: "Failed to update integration" });
+  }
 });
 
   // Approvals (Enterprise Governance)

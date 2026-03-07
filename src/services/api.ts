@@ -251,6 +251,14 @@ export const api = {
     });
     return res.json();
   },
+  async predictChurn(contactId: string): Promise<{ riskLevel: 'LOW' | 'MEDIUM' | 'HIGH', probability: number, reasons: string[] }> {
+    const res = await fetch('/api/ai/predict-churn', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ contactId })
+    });
+    return res.json();
+  },
   // A/B Testing
   async getABResults(id: string): Promise<any> {
     const res = await fetch(`/api/campaigns/${id}/ab-results`);
@@ -346,6 +354,14 @@ export const api = {
   // Integrations
   async getIntegrations(): Promise<any[]> {
     const res = await fetch('/api/integrations');
+    return res.json();
+  },
+  async updateIntegration(id: string, data: { status?: string, config?: any }): Promise<any> {
+    const res = await fetch(`/api/integrations/${id}`, {
+      method: 'PATCH',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(data),
+    });
     return res.json();
   },
   async getWebhooks(): Promise<any[]> {

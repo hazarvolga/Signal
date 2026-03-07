@@ -1,4 +1,5 @@
 import React, { useState, useEffect, useCallback, useRef } from 'react';
+import * as d3 from 'd3';
 import { BrowserRouter, Routes, Route, Link, useLocation, useParams, Navigate, useSearchParams, useNavigate } from 'react-router-dom';
 import { 
   LayoutDashboard, 
@@ -270,6 +271,110 @@ const Masthead = ({ onOpenGuide, theme, toggleTheme }: { onOpenGuide: () => void
         )}
       </AnimatePresence>
     </header>
+  );
+};
+
+const AudienceHealthChart = () => {
+  const svgRef = useRef<SVGSVGElement>(null);
+
+  useEffect(() => {
+    if (!svgRef.current) return;
+
+    const data = [
+      { date: new Date(2024, 0, 1), subscribers: 1000, churn: 20 },
+      { date: new Date(2024, 1, 1), subscribers: 1200, churn: 25 },
+      { date: new Date(2024, 2, 1), subscribers: 1500, churn: 30 },
+      { date: new Date(2024, 3, 1), subscribers: 1800, churn: 45 },
+      { date: new Date(2024, 4, 1), subscribers: 2200, churn: 40 },
+      { date: new Date(2024, 5, 1), subscribers: 2800, churn: 55 },
+    ];
+
+    const margin = { top: 20, right: 30, bottom: 30, left: 40 };
+    const width = 800 - margin.left - margin.right;
+    const height = 300 - margin.top - margin.bottom;
+
+    d3.select(svgRef.current).selectAll("*").remove();
+
+    const svg = d3.select(svgRef.current)
+      .attr("width", width + margin.left + margin.right)
+      .attr("height", height + margin.top + margin.bottom)
+      .append("g")
+      .attr("transform", `translate(${margin.left},${margin.top})`);
+
+    const x = d3.scaleTime()
+      .domain(d3.extent(data, d => d.date) as [Date, Date])
+      .range([0, width]);
+
+    const y = d3.scaleLinear()
+      .domain([0, d3.max(data, d => d.subscribers) as number])
+      .range([height, 0]);
+
+    svg.append("g")
+      .attr("transform", `translate(0,${height})`)
+      .call(d3.axisBottom(x).ticks(6).tickFormat(d3.timeFormat("%b") as any))
+      .attr("font-family", "JetBrains Mono")
+      .attr("font-size", "10px");
+
+    svg.append("g")
+      .call(d3.axisLeft(y).ticks(5))
+      .attr("font-family", "JetBrains Mono")
+      .attr("font-size", "10px");
+
+    const line = d3.line<any>()
+      .x(d => x(d.date))
+      .y(d => y(d.subscribers))
+      .curve(d3.curveMonotoneX);
+
+    svg.append("path")
+      .datum(data)
+      .attr("fill", "none")
+      .attr("stroke", "#8B1A1A")
+      .attr("stroke-width", 2)
+      .attr("d", line);
+
+    svg.selectAll(".dot")
+      .data(data)
+      .enter().append("circle")
+      .attr("class", "dot")
+      .attr("cx", d => x(d.date))
+      .attr("cy", d => y(d.subscribers))
+      .attr("r", 4)
+      .attr("fill", "#8B1A1A")
+      .attr("stroke", "#F5F2EC")
+      .attr("stroke-width", 2);
+
+  }, []);
+
+  return (
+    <div className="bg-surface border border-border-hairline p-8 space-y-6">
+      <div className="flex justify-between items-end">
+        <div>
+          <p className="text-[10px] font-black uppercase tracking-[0.2em] text-burgundy mb-2">Advanced Audience Health</p>
+          <h3 className="text-3xl font-serif font-bold">Growth Velocity</h3>
+        </div>
+        <div className="text-right">
+          <p className="text-[10px] font-black uppercase tracking-widest text-ink/40">Retention Rate</p>
+          <p className="text-2xl font-editorial italic">94.2%</p>
+        </div>
+      </div>
+      <div className="overflow-x-auto">
+        <svg ref={svgRef}></svg>
+      </div>
+      <div className="grid grid-cols-3 gap-8 pt-6 border-t border-border-hairline">
+        <div>
+          <p className="text-[9px] font-black uppercase tracking-widest text-ink/40 mb-1">Acquisition</p>
+          <p className="text-lg font-bold">+240 <span className="text-[10px] text-status-success">↑</span></p>
+        </div>
+        <div>
+          <p className="text-[9px] font-black uppercase tracking-widest text-ink/40 mb-1">Churn Rate</p>
+          <p className="text-lg font-bold">1.2% <span className="text-[10px] text-status-success">↓</span></p>
+        </div>
+        <div>
+          <p className="text-[9px] font-black uppercase tracking-widest text-ink/40 mb-1">LTV (Est.)</p>
+          <p className="text-lg font-bold">$142.00</p>
+        </div>
+      </div>
+    </div>
   );
 };
 
@@ -4063,6 +4168,8 @@ const Audiences = () => {
   const [preferenceContact, setPreferenceContact] = useState<any>(null);
   const [notificationContact, setNotificationContact] = useState<any>(null);
   const [notifications, setNotifications] = useState<any[]>([]);
+  const [churnRisks, setChurnRisks] = useState<Record<string, any>>({});
+  const [isPredicting, setIsPredicting] = useState<string | null>(null);
   const [availableLists, setAvailableLists] = useState<any[]>([]);
   const [selectedLists, setSelectedLists] = useState<string[]>([]);
 
@@ -4114,6 +4221,18 @@ const Audiences = () => {
     const data = await api.getContactNotifications(contact.id);
     setNotifications(data);
     setNotificationContact(contact);
+  };
+
+  const handlePredictChurn = async (contactId: string) => {
+    setIsPredicting(contactId);
+    try {
+      const risk = await api.predictChurn(contactId);
+      setChurnRisks(prev => ({ ...prev, [contactId]: risk }));
+    } catch (e) {
+      console.error("Churn prediction failed", e);
+    } finally {
+      setIsPredicting(null);
+    }
   };
 
   const onSubmit = async (data: ContactFormData) => {
@@ -4376,6 +4495,7 @@ const Audiences = () => {
                 <th className="px-4 py-3 metric-label">Signal Quality</th>
                 <th className="px-4 py-3 metric-label">Status</th>
                 <th className="px-4 py-3 metric-label">Engagement</th>
+                <th className="px-4 py-3 metric-label">Churn Risk</th>
                 <th className="px-4 py-3 metric-label">Tags</th>
                 <th className="px-4 py-3 metric-label text-right">Joined</th>
               </tr>
@@ -4418,6 +4538,29 @@ const Audiences = () => {
                       </div>
                       <span className="font-mono text-[10px] text-ink/40">{contact.engagementScore}</span>
                     </div>
+                  </td>
+                  <td className="px-4 py-4">
+                    {churnRisks[contact.id] ? (
+                      <div className="flex flex-col gap-1">
+                        <span className={cn(
+                          "text-[9px] font-black uppercase tracking-widest px-2 py-0.5 border w-fit",
+                          churnRisks[contact.id].riskLevel === 'HIGH' ? "border-burgundy text-burgundy bg-burgundy/5" :
+                          churnRisks[contact.id].riskLevel === 'MEDIUM' ? "border-brass text-brass bg-brass/5" :
+                          "border-status-success text-status-success bg-status-success/5"
+                        )}>
+                          {churnRisks[contact.id].riskLevel} RISK
+                        </span>
+                        <span className="text-[8px] font-mono text-ink/40">{(churnRisks[contact.id].probability * 100).toFixed(0)}% Prob.</span>
+                      </div>
+                    ) : (
+                      <button 
+                        onClick={() => handlePredictChurn(contact.id)}
+                        disabled={isPredicting === contact.id}
+                        className="text-[9px] font-black uppercase tracking-widest text-ink/40 hover:text-burgundy transition-colors disabled:opacity-50"
+                      >
+                        {isPredicting === contact.id ? "Predicting..." : "Analyze Risk"}
+                      </button>
+                    )}
                   </td>
                   <td className="px-4 py-4">
                     <div className="flex flex-wrap gap-1">
