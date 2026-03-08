@@ -2,6 +2,7 @@ import express from "express";
 import { createServer as createViteServer } from "vite";
 import path from "path";
 import { fileURLToPath } from "url";
+import crypto from "crypto";
 import { mjmlTemplates } from "./src/data/mjmlTemplates";
 import { geminiService } from "./src/services/geminiService";
 import { redisService } from "./src/services/redisService";
@@ -483,6 +484,35 @@ async function startServer() {
   });
 
   const roomUsers = new Map<string, Map<string, any>>();
+
+  async function createEventAndBroadcast(data: {
+    type: string;
+    contactId: string;
+    campaignId?: string;
+    variationId?: string;
+    metadata?: any;
+  }) {
+    const event = await prisma.event.create({
+      data: {
+        type: data.type,
+        contactId: data.contactId,
+        campaignId: data.campaignId,
+        variationId: data.variationId,
+        metadata: data.metadata ? JSON.stringify(data.metadata) : "{}",
+      },
+      include: { contact: true }
+    });
+
+    io.to("dashboard-live").emit("live-activity", {
+      id: event.id,
+      type: event.type,
+      contactName: event.contact ? `${event.contact.firstName} ${event.contact.lastName}` : 'Unknown',
+      timestamp: event.timestamp,
+      metadata: data.metadata || {}
+    });
+
+    return event;
+  }
 
   io.on("connection", (socket) => {
     socket.on("join-room", ({ roomId, user }) => {
@@ -1197,12 +1227,132 @@ async function startServer() {
     res.json(segment);
   });
 
+  app.get("/api/segments/:id/contacts", async (req, res) => {
+    const segment = await prisma.segment.findUnique({
+      where: { id: req.params.id },
+    });
+    if (!segment) return res.status(404).json({ error: "Segment not found" });
+
+    const rules = JSON.parse(segment.rules);
+    const where: any = { organizationId: segment.organizationId };
+
+    for (const rule of rules) {
+      if (rule.type === 'event') {
+        const timeframeMs = parseTimeframe(rule.timeframe);
+        where.behavioralEvents = {
+          some: {
+            name: rule.eventName,
+            timestamp: {
+              gte: new Date(Date.now() - timeframeMs)
+            }
+          }
+        };
+      } else if (rule.type === 'attribute') {
+        if (rule.field === 'status') {
+          where.status = rule.value;
+        }
+        // Add more attribute filters as needed
+      }
+    }
+
+    const contacts = await prisma.contact.findMany({
+      where,
+      include: { tags: true },
+    });
+    res.json(contacts);
+  });
+
+  app.get("/api/segments/:id/count", async (req, res) => {
+    const segment = await prisma.segment.findUnique({
+      where: { id: req.params.id },
+    });
+    if (!segment) return res.status(404).json({ error: "Segment not found" });
+
+    const rules = JSON.parse(segment.rules);
+    const where: any = { organizationId: segment.organizationId };
+
+    for (const rule of rules) {
+      if (rule.type === 'event') {
+        const timeframeMs = parseTimeframe(rule.timeframe);
+        where.behavioralEvents = {
+          some: {
+            name: rule.eventName,
+            timestamp: {
+              gte: new Date(Date.now() - timeframeMs)
+            }
+          }
+        };
+      } else if (rule.type === 'attribute') {
+        if (rule.field === 'status') {
+          where.status = rule.value;
+        }
+      }
+    }
+
+    const count = await prisma.contact.count({ where });
+    res.json({ count });
+  });
+
   app.delete("/api/segments/:id", async (req, res) => {
     await prisma.segment.delete({
       where: { id: req.params.id },
     });
     res.json({ success: true });
   });
+
+  // Behavioral Events
+  app.post("/api/events/behavioral", async (req, res) => {
+    const org = await prisma.organization.findFirst();
+    const { email, name, properties } = req.body;
+
+    let contact = await prisma.contact.findUnique({
+      where: { email_organizationId: { email, organizationId: org!.id } }
+    });
+
+    if (!contact) {
+      contact = await prisma.contact.create({
+        data: {
+          email,
+          organizationId: org!.id,
+          source: "BEHAVIORAL_EVENT"
+        }
+      });
+    }
+
+    const event = await prisma.behavioralEvent.create({
+      data: {
+        name,
+        properties: JSON.stringify(properties || {}),
+        contactId: contact.id,
+        organizationId: org!.id
+      },
+      include: { contact: true }
+    });
+
+    // Broadcast to live dashboard
+    io.to("dashboard-live").emit("live-activity", {
+      id: event.id,
+      type: "BEHAVIORAL",
+      eventName: event.name,
+      contactName: event.contact ? `${event.contact.firstName} ${event.contact.lastName}` : 'Unknown',
+      timestamp: event.timestamp,
+      properties: properties || {}
+    });
+
+    res.json(event);
+  });
+
+  function parseTimeframe(timeframe: string): number {
+    const num = parseInt(timeframe);
+    const unit = timeframe.slice(-1);
+    switch (unit) {
+      case 'h': return num * 60 * 60 * 1000;
+      case 'd': return num * 24 * 60 * 60 * 1000;
+      case 'w': return num * 7 * 24 * 60 * 60 * 1000;
+      case 'm': return num * 30 * 24 * 60 * 60 * 1000; // rough month
+      default: return num * 24 * 60 * 60 * 1000;
+    }
+  }
 
   // Custom Fields
   app.get("/api/custom-fields", async (req, res) => {
@@ -1403,7 +1553,7 @@ async function startServer() {
   });
 
   app.post("/api/events", async (req, res) => {
-    const { type, metadata, contactId, campaignId } = req.body;
+    const { type, metadata, contactId, campaignId, variationId } = req.body;
     
     // Bounce/Complaint Suppression Logic (Enterprise Deliverability)
     if (type === 'BOUNCE' || type === 'COMPLAINT') {
@@ -1413,14 +1563,14 @@ async function startServer() {
       });
     }
 
-    const event = await prisma.event.create({
-      data: {
-        type,
-        metadata: metadata ? JSON.stringify(metadata) : "{}",
-        contactId,
-        campaignId,
-      },
+    const event = await createEventAndBroadcast({
+      type,
+      metadata,
+      contactId,
+      campaignId,
+      variationId,
     });
+
     res.json(event);
   });
 
@@ -1504,11 +1654,22 @@ app.post("/api/ai/predict-churn", async (req, res) => {
   const { contactId } = req.body;
   const contact = await prisma.contact.findUnique({
     where: { id: contactId },
-    include: { events: true, engagement: true }
+    include: { 
+      events: { take: 50, orderBy: { timestamp: 'desc' } },
+      behavioralEvents: { take: 20, orderBy: { timestamp: 'desc' } },
+      revenue: { take: 10, orderBy: { timestamp: 'desc' } }
+    }
   });
   if (!contact) return res.status(404).json({ error: "Contact not found" });
 
-  const risk = await geminiService.predictChurnRisk(contact);
+  // Get some context about the overall audience engagement
+  const avgEngagement = await prisma.contact.aggregate({
+    _avg: { engagementScore: true }
+  });
+
+  const risk = await geminiService.predictChurnRisk(contact, { 
+    averageEngagementScore: avgEngagement._avg.engagementScore 
+  });
   res.json(risk);
 });
 
@@ -1520,7 +1681,20 @@ app.post("/api/ai/translate", async (req, res) => {
 
 app.post("/api/ai/predict-send-time", async (req, res) => {
   const { topic } = req.body;
-  const prediction = await geminiService.predictBestSendTime(topic);
+  
+  // Fetch historical open events grouped by hour
+  const openEvents = await prisma.event.findMany({
+    where: { type: 'OPEN' },
+    select: { timestamp: true }
+  });
+
+  const hourlyStats: Record<number, number> = {};
+  openEvents.forEach(e => {
+    const hour = new Date(e.timestamp).getHours();
+    hourlyStats[hour] = (hourlyStats[hour] || 0) + 1;
+  });
+
+  const prediction = await geminiService.predictBestSendTime(topic, hourlyStats);
   res.json(prediction);
 });
 
@@ -1533,14 +1707,36 @@ app.post("/api/ai/generate-content", async (req, res) => {
 // A/B Testing Endpoints
 app.get("/api/campaigns/:id/ab-results", async (req, res) => {
   const { id } = req.params;
-  const campaign = await prisma.campaign.findUnique({ where: { id } });
-  if (!campaign || campaign.type !== 'AB') return res.status(404).json({ error: "A/B campaign not found" });
+  const campaign = await prisma.campaign.findUnique({ 
+    where: { id },
+    include: {
+      events: true
+    }
+  });
+  
+  if (!campaign || campaign.type !== 'AB') {
+    return res.status(404).json({ error: "A/B campaign not found" });
+  }
 
-  // Mock results
+  const eventsA = campaign.events.filter(e => e.variationId === 'A');
+  const eventsB = campaign.events.filter(e => e.variationId === 'B');
+
+  const stats = (events: any[]) => {
+    const opens = events.filter(e => e.type === 'OPEN').length;
+    const clicks = events.filter(e => e.type === 'CLICK').length;
+    const sent = events.filter(e => e.type === 'SENT').length || 1;
+    return {
+      opens,
+      clicks,
+      rate: (opens / sent) * 100,
+      clickRate: (clicks / sent) * 100
+    };
+  };
+
   res.json({
-    variationA: { opens: 120, clicks: 45, rate: 24.5 },
-    variationB: { opens: 145, clicks: 38, rate: 28.2 },
-    winner: null
+    variationA: stats(eventsA),
+    variationB: stats(eventsB),
+    winner: campaign.status === 'SENT' ? 'Determined' : null
   });
 });
 
@@ -1551,19 +1747,47 @@ app.post("/api/campaigns/:id/pick-winner", async (req, res) => {
   const campaign = await prisma.campaign.findUnique({ where: { id } });
   if (!campaign) return res.status(404).json({ error: "Campaign not found" });
 
-  const updateData: any = { status: 'SENT' };
+  const updateData: any = { status: 'SENT', sentAt: new Date() };
   
   if (winnerVariation === 'B' && campaign.subjectB && campaign.contentB) {
     updateData.subject = campaign.subjectB;
     updateData.content = campaign.contentB;
   }
 
-  const updatedCampaign = await prisma.campaign.update({
+  await prisma.campaign.update({
     where: { id },
     data: updateData
   });
+
+  res.json({ message: `Winner ${winnerVariation} selected. Campaign sent to remaining audience.` });
+});
+
+app.post("/api/campaigns/:id/ab-simulate", async (req, res) => {
+  const { id } = req.params;
+  const campaign = await prisma.campaign.findUnique({ where: { id } });
+  if (!campaign || campaign.type !== 'AB') return res.status(404).json({ error: "A/B campaign not found" });
+
+  const contacts = await prisma.contact.findMany({ take: 100 });
   
-  res.json(updatedCampaign);
+  for (let i = 0; i < contacts.length; i++) {
+    const variation = i % 2 === 0 ? 'A' : 'B';
+    const contact = contacts[i];
+    
+    // Sent event
+    await createEventAndBroadcast({ type: 'SENT', contactId: contact.id, campaignId: id, variationId: variation });
+
+    // Random Open
+    if (Math.random() > 0.5) {
+      await createEventAndBroadcast({ type: 'OPEN', contactId: contact.id, campaignId: id, variationId: variation });
+
+      // Random Click
+      if (Math.random() > 0.7) {
+        await createEventAndBroadcast({ type: 'CLICK', contactId: contact.id, campaignId: id, variationId: variation });
+      }
+    }
+  }
+
+  res.json({ message: "A/B test simulation completed with 100 sample events." });
 });
 
 // Commerce & Products
@@ -1796,6 +2020,88 @@ app.patch("/api/integrations/:id", async (req, res) => {
   });
 
   // Preference Center (Compliance)
+  app.get("/api/preferences/:token", async (req, res) => {
+    const { token } = req.params;
+    const contact = await prisma.contact.findUnique({
+      where: { preferenceToken: token },
+      include: { 
+        listMemberships: { include: { list: true } },
+        organization: true
+      }
+    });
+    
+    if (!contact) return res.status(404).json({ error: "Invalid preference link" });
+
+    const allLists = await prisma.list.findMany({
+      where: { organizationId: contact.organizationId }
+    });
+
+    res.json({
+      contact: {
+        id: contact.id,
+        email: contact.email,
+        firstName: contact.firstName,
+        lastName: contact.lastName,
+        emailConsent: contact.emailConsent,
+        smsConsent: contact.smsConsent,
+        whatsappConsent: contact.whatsappConsent,
+      },
+      memberships: contact.listMemberships.map(m => m.listId),
+      availableLists: allLists,
+      organization: {
+        name: contact.organization.name,
+        logoUrl: contact.organization.logoUrl,
+      }
+    });
+  });
+
+  app.post("/api/preferences/:token", async (req, res) => {
+    const { token } = req.params;
+    const { listIds, emailConsent, smsConsent, whatsappConsent, ipAddress, userAgent } = req.body;
+    
+    const contact = await prisma.contact.findUnique({
+      where: { preferenceToken: token }
+    });
+    
+    if (!contact) return res.status(404).json({ error: "Invalid preference link" });
+
+    const contactId = contact.id;
+    
+    // Update contact consents
+    await prisma.contact.update({
+      where: { id: contactId },
+      data: {
+        emailConsent: !!emailConsent,
+        smsConsent: !!smsConsent,
+        whatsappConsent: !!whatsappConsent,
+      }
+    });
+
+    // Clear existing list memberships
+    await prisma.listMembership.deleteMany({ where: { contactId } });
+    
+    // Add new list memberships
+    if (listIds && listIds.length > 0) {
+      await prisma.listMembership.createMany({
+        data: listIds.map((listId: string) => ({ contactId, listId }))
+      });
+    }
+
+    // Log Consent
+    await prisma.consentLog.create({
+      data: {
+        contactId,
+        action: "PREFERENCE_UPDATE",
+        source: "PUBLIC_PREFERENCE_CENTER",
+        ipAddress: ipAddress || req.ip,
+        userAgent: userAgent || req.headers['user-agent'],
+        organizationId: contact.organizationId
+      }
+    });
+    
+    res.json({ success: true });
+  });
+
   app.get("/api/contacts/:id/preferences", async (req, res) => {
     const contact = await prisma.contact.findUnique({
       where: { id: req.params.id },
@@ -1820,10 +2126,20 @@ app.patch("/api/integrations/:id", async (req, res) => {
   });
 
   app.post("/api/contacts/:id/preferences", async (req, res) => {
-    const { listIds, source, ipAddress, userAgent } = req.body;
+    const { listIds, emailConsent, smsConsent, whatsappConsent, source, ipAddress, userAgent } = req.body;
     const contactId = req.params.id;
     const org = await prisma.organization.findFirst();
     
+    // Update contact consents
+    await prisma.contact.update({
+      where: { id: contactId },
+      data: {
+        emailConsent: !!emailConsent,
+        smsConsent: !!smsConsent,
+        whatsappConsent: !!whatsappConsent,
+      }
+    });
+
     // Clear existing
     await prisma.listMembership.deleteMany({ where: { contactId } });
     
@@ -1966,17 +2282,14 @@ app.post("/api/webhooks/shopify", async (req, res) => {
         });
 
         if (contact) {
-          await prisma.event.create({
-            data: {
-              type: "ORDER_PLACED",
-              metadata: JSON.stringify({ 
-                orderId, 
-                total: total_price,
-                source: "SHOPIFY_WEBHOOK"
-              }),
-              contactId: contact.id,
-              timestamp: new Date()
-            }
+          await createEventAndBroadcast({
+            type: "ORDER_PLACED",
+            metadata: { 
+              orderId, 
+              total: total_price,
+              source: "SHOPIFY_WEBHOOK"
+            },
+            contactId: contact.id,
           });
         }
       }
@@ -2044,13 +2357,10 @@ app.post("/api/webhooks/shopify/simulate", async (req, res) => {
     if (!contact) return res.status(404).json({ error: "No contact found to simulate order" });
 
     const orderId = Date.now().toString();
-    await prisma.event.create({
-      data: {
-        type: "ORDER_PLACED",
-        metadata: JSON.stringify({ orderId, total: "149.50", source: "SIMULATED_WEBHOOK" }),
-        contactId: contact.id,
-        timestamp: new Date()
-      }
+    await createEventAndBroadcast({
+      type: "ORDER_PLACED",
+      metadata: { orderId, total: "149.50", source: "SIMULATED_WEBHOOK" },
+      contactId: contact.id,
     });
 
     await prisma.webhookLog.create({
@@ -2071,19 +2381,47 @@ app.post("/api/webhooks/shopify/simulate", async (req, res) => {
 
 // AI & Predictive
 app.post("/api/ai/churn-prediction", async (req, res) => {
-  // Simulate AI processing
-  await new Promise(resolve => setTimeout(resolve, 2000));
-  
-  const subscribers = [
-    { name: 'Kazuo Ishiguro', email: 'kazuo@example.com', score: 45, prob: '82%', risk: 'HIGH' },
-    { name: 'Elena Ferrante', email: 'elena@example.com', score: 78, prob: '15%', risk: 'LOW' },
-    { name: 'Julian Barnes', email: 'julian@example.com', score: 85, prob: '8%', risk: 'LOW' },
-    { name: 'Zadie Smith', email: 'zadie@example.com', score: 92, prob: '3%', risk: 'LOW' },
-  ];
-  
+  const org = await prisma.organization.findFirst();
+  if (!org) return res.status(404).json({ error: "Org not found" });
+
+  // Fetch contacts with low engagement scores or no recent activity
+  const atRiskContacts = await prisma.contact.findMany({
+    where: { 
+      organizationId: org.id,
+      status: 'SUBSCRIBED',
+      engagementScore: { lt: 40 }
+    },
+    take: 10,
+    orderBy: { engagementScore: 'asc' },
+    include: { tags: true }
+  });
+
+  // Use Gemini to summarize the risk for the top at-risk contacts
+  const predictions = await Promise.all(atRiskContacts.map(async (c) => {
+    const risk = await geminiService.predictChurnRisk(c);
+    return {
+      name: `${c.firstName || ''} ${c.lastName || ''}`.trim() || c.email,
+      email: c.email,
+      score: c.engagementScore,
+      prob: `${Math.round(risk.probability * 100)}%`,
+      risk: risk.riskLevel,
+      reasons: risk.reasons
+    };
+  }));
+
+  const stats = await prisma.contact.groupBy({
+    by: ['status'],
+    where: { organizationId: org.id },
+    _count: true
+  });
+
   res.json({
-    summary: { high: 124, medium: 452, low: 2841 },
-    topAtRisk: subscribers
+    summary: { 
+      high: predictions.filter(p => p.risk === 'HIGH').length * 10, // Scaled for demo
+      medium: predictions.filter(p => p.risk === 'MEDIUM').length * 15,
+      low: stats.find(s => s.status === 'SUBSCRIBED')?._count || 0
+    },
+    topAtRisk: predictions
   });
 });
 

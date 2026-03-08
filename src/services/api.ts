@@ -102,6 +102,25 @@ export const api = {
     return res.json();
   },
 
+  async getSegmentContacts(id: string): Promise<Contact[]> {
+    const res = await fetch(`/api/segments/${id}/contacts`);
+    return res.json();
+  },
+
+  async getSegmentCount(id: string): Promise<{ count: number }> {
+    const res = await fetch(`/api/segments/${id}/count`);
+    return res.json();
+  },
+
+  async trackBehavioralEvent(data: { email: string, name: string, properties?: any }): Promise<any> {
+    const res = await fetch('/api/events/behavioral', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(data),
+    });
+    return res.json();
+  },
+
   async getCustomFields(): Promise<CustomFieldDefinition[]> {
     const res = await fetch('/api/custom-fields');
     return res.json();
@@ -272,6 +291,10 @@ export const api = {
     });
     return res.json();
   },
+  async simulateAB(id: string): Promise<any> {
+    const res = await fetch(`/api/campaigns/${id}/ab-simulate`, { method: 'POST' });
+    return res.json();
+  },
   // Commerce
   async getProducts(): Promise<any[]> {
     const res = await fetch('/api/products');
@@ -430,6 +453,18 @@ export const api = {
   },
 
   // Preference Center
+  async getPublicPreferences(token: string): Promise<any> {
+    const res = await fetch(`/api/preferences/${token}`);
+    return res.json();
+  },
+  async updatePublicPreferences(token: string, data: any): Promise<any> {
+    const res = await fetch(`/api/preferences/${token}`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(data),
+    });
+    return res.json();
+  },
   async getContactPreferences(id: string): Promise<any> {
     const res = await fetch(`/api/contacts/${id}/preferences`);
     return res.json();

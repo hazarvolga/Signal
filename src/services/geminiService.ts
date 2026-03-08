@@ -91,11 +91,13 @@ export const geminiService = {
     return response.text?.trim() || content;
   },
 
-  async predictBestSendTime(topic: string): Promise<{ hour: number, reason: string }> {
+  async predictBestSendTime(topic: string, engagementData?: any): Promise<{ hour: number, reason: string }> {
+    const dataContext = engagementData ? `Here is the historical engagement data (opens by hour): ${JSON.stringify(engagementData)}` : "No historical data available.";
     const response = await ai.models.generateContent({
       model: "gemini-3-flash-preview",
-      contents: `Based on general email marketing trends for the topic "${topic}", 
+      contents: `Based on the topic "${topic}" and the following context: ${dataContext}, 
       what is the statistically best hour of the day (0-23) to send this email for maximum engagement?
+      If historical data is provided, prioritize it. If not, use general industry trends for this topic.
       Return as JSON with "hour" (number) and "reason" (string).`,
       config: {
         responseMimeType: "application/json",
@@ -144,13 +146,16 @@ export const geminiService = {
     }
   },
 
-  async predictChurnRisk(contactData: any): Promise<{ riskLevel: 'LOW' | 'MEDIUM' | 'HIGH', probability: number, reasons: string[] }> {
+  async predictChurnRisk(contactData: any, audienceContext?: any): Promise<{ riskLevel: 'LOW' | 'MEDIUM' | 'HIGH', probability: number, reasons: string[] }> {
+    const context = audienceContext ? `Audience context: ${JSON.stringify(audienceContext)}` : "";
     const response = await ai.models.generateContent({
       model: "gemini-3-flash-preview",
       contents: `Analyze the following contact engagement data and predict their churn risk:
-      Data: ${JSON.stringify(contactData)}
+      Contact Data: ${JSON.stringify(contactData)}
+      ${context}
       
       Provide a risk level (LOW, MEDIUM, HIGH), a probability (0-1), and a list of reasons.
+      Consider engagement score, recent activity, and status.
       Return as JSON with "riskLevel", "probability", and "reasons".`,
       config: {
         responseMimeType: "application/json",

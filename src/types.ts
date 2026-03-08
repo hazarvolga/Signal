@@ -50,6 +50,10 @@ export interface Contact {
   source?: string;
   engagementScore: number;
   customFields: string;
+  emailConsent: boolean;
+  smsConsent: boolean;
+  whatsappConsent: boolean;
+  preferenceToken?: string;
   organizationId: string;
   createdAt: string;
   tags?: Tag[];
@@ -203,9 +207,19 @@ export interface Flow {
 export interface Event {
   id: string;
   type: string;
+  name?: string;
   metadata: string; // JSON string
   campaignId?: string;
   contactId: string;
+  timestamp: string;
+}
+
+export interface BehavioralEvent {
+  id: string;
+  name: string;
+  properties: string; // JSON string
+  contactId: string;
+  organizationId: string;
   timestamp: string;
 }
 

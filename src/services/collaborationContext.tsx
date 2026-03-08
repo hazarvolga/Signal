@@ -8,6 +8,7 @@ interface CollaborationContextType {
   cursors: Record<string, any>;
   activities: Record<string, string>;
   activityLog: any[];
+  liveActivities: any[];
   joinRoom: (roomId: string) => void;
   leaveRoom: (roomId: string) => void;
   sendCursorMove: (roomId: string, position: { x: number; y: number }) => void;
@@ -22,6 +23,7 @@ export const CollaborationProvider: React.FC<{ children: React.ReactNode }> = ({
   const [cursors, setCursors] = useState<Record<string, any>>({});
   const [activities, setActivities] = useState<Record<string, string>>({});
   const [activityLog, setActivityLog] = useState<any[]>([]);
+  const [liveActivities, setLiveActivities] = useState<any[]>([]);
   const { user } = useAuth();
 
   useEffect(() => {
@@ -44,6 +46,10 @@ export const CollaborationProvider: React.FC<{ children: React.ReactNode }> = ({
         activity,
         timestamp: new Date()
       }, ...prev].slice(0, 50));
+    });
+
+    newSocket.on('live-activity', (activity: any) => {
+      setLiveActivities(prev => [activity, ...prev].slice(0, 50));
     });
 
     return () => {
@@ -85,6 +91,7 @@ export const CollaborationProvider: React.FC<{ children: React.ReactNode }> = ({
       cursors, 
       activities,
       activityLog,
+      liveActivities,
       joinRoom, 
       leaveRoom, 
       sendCursorMove, 

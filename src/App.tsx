@@ -13,6 +13,8 @@ import {
   Trash2, 
   CheckCircle2, 
   AlertCircle,
+  MailOpen,
+  MousePointer2,
   Sparkles,
   Split,
   Filter,
@@ -149,6 +151,7 @@ const Masthead = ({ onOpenGuide, theme, toggleTheme }: { onOpenGuide: () => void
     { to: "/campaigns", label: "Campaigns" },
     { to: "/audiences", label: "Audiences" },
     { to: "/automations", label: "Automations" },
+    { to: "/media", label: "Media" },
     { to: "/commerce", label: "Commerce" },
     { to: "/validation", label: "Validation" },
     { to: "/collaboration", label: "Collaboration" },
@@ -1015,6 +1018,14 @@ const Integrations = () => {
   const [webhooks, setWebhooks] = useState<any[]>([]);
   const [isAddingWebhook, setIsAddingWebhook] = useState(false);
   const [newWebhook, setNewWebhook] = useState({ url: '', events: [] as string[] });
+  const [channels, setChannels] = useState([
+    { id: 'sms', name: 'SMS (Twilio)', icon: <Smartphone size={24} />, apiKey: '', status: 'Disconnected' },
+    { id: 'whatsapp', name: 'WhatsApp (Meta)', icon: <Link2 size={24} />, apiKey: '', status: 'Disconnected' },
+  ]);
+
+  const handleUpdateChannel = (id: string, key: string) => {
+    setChannels(prev => prev.map(c => c.id === id ? { ...c, apiKey: key, status: key ? 'Connected' : 'Disconnected' } : c));
+  };
 
   const availableEvents = [
     'contact.created',
@@ -1071,47 +1082,72 @@ const Integrations = () => {
         guideKey="integrations-api"
       />
 
-      <div className="space-y-8">
-        <h3 className="text-2xl font-serif font-bold text-ink">Integrations Marketplace</h3>
-        <div className="grid grid-cols-12 gap-6">
-          {marketplace.map(item => (
-            <div key={item.id} className="col-span-12 md:col-span-6 lg:col-span-3 bg-surface border border-border-hairline p-8 space-y-6 hover:border-burgundy transition-colors group">
-              <div className="w-12 h-12 bg-bg border border-border-hairline flex items-center justify-center text-ink/60 group-hover:text-burgundy transition-colors">
-                {item.icon}
-              </div>
-              <div>
-                <p className="text-sm font-black uppercase tracking-widest text-ink">{item.name}</p>
-                <p className="text-[11px] font-editorial italic text-ink/60 mt-1">{item.desc}</p>
-              </div>
-              <button className={cn(
-                "w-full py-2 text-[10px] font-black uppercase tracking-widest transition-all",
-                item.status === 'Connected' ? "bg-status-success/10 text-status-success border border-status-success/20" : "border border-border-hairline text-ink/60 hover:bg-bg"
-              )}>
-                {item.status}
-              </button>
-              {item.id === 'shopify' && item.status === 'Connected' && (
-                <div className="flex gap-2 pt-2">
-                  <button 
-                    onClick={() => api.simulateShopifyWebhook('stock').then(res => alert(res.message))}
-                    className="flex-1 py-1 text-[8px] font-black uppercase tracking-widest border border-burgundy/20 text-burgundy hover:bg-burgundy hover:text-white transition-all"
-                  >
-                    Simulate Stock
-                  </button>
-                  <button 
-                    onClick={() => api.simulateShopifyWebhook('order').then(res => alert(res.message))}
-                    className="flex-1 py-1 text-[8px] font-black uppercase tracking-widest border border-burgundy/20 text-burgundy hover:bg-burgundy hover:text-white transition-all"
-                  >
-                    Simulate Order
-                  </button>
-                </div>
-              )}
-            </div>
-          ))}
-        </div>
-      </div>
-
       <div className="grid grid-cols-12 gap-12">
-        <div className="col-span-12 lg:col-span-7 space-y-8">
+        <div className="col-span-12 lg:col-span-8 space-y-12">
+          <div className="space-y-8">
+            <h3 className="text-2xl font-serif font-bold text-ink">Channel Connections</h3>
+            <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
+              {channels.map(channel => (
+                <div key={channel.id} className="bg-surface border border-border-hairline p-8 space-y-6">
+                  <div className="flex justify-between items-start">
+                    <div className="w-12 h-12 bg-bg border border-border-hairline flex items-center justify-center text-ink/60">
+                      {channel.icon}
+                    </div>
+                    <span className={cn(
+                      "text-[9px] font-black uppercase tracking-widest px-2 py-0.5 border",
+                      channel.status === 'Connected' ? "border-status-success text-status-success bg-status-success/5" : "border-border-hairline text-ink/40"
+                    )}>
+                      {channel.status}
+                    </span>
+                  </div>
+                  <div className="space-y-4">
+                    <p className="text-sm font-black uppercase tracking-widest text-ink">{channel.name}</p>
+                    <div className="space-y-2">
+                      <label className="text-[10px] font-black uppercase tracking-widest text-ink/40">API Key / Token</label>
+                      <input 
+                        type="password"
+                        placeholder="••••••••••••••••"
+                        className="w-full bg-bg border border-border-hairline p-3 font-mono text-xs focus:border-burgundy outline-none"
+                        value={channel.apiKey}
+                        onChange={(e) => handleUpdateChannel(channel.id, e.target.value)}
+                      />
+                    </div>
+                    <button className="w-full py-3 bg-ink text-white text-[10px] font-black uppercase tracking-widest hover:bg-burgundy transition-all">
+                      Save Configuration
+                    </button>
+                  </div>
+                </div>
+              ))}
+            </div>
+          </div>
+
+          <div className="space-y-8">
+            <h3 className="text-2xl font-serif font-bold text-ink">Integrations Marketplace</h3>
+            <div className="grid grid-cols-12 gap-6">
+              {marketplace.map(item => (
+                <div key={item.id} className="col-span-12 md:col-span-6 bg-surface border border-border-hairline p-8 space-y-6 hover:border-burgundy transition-colors group">
+                  <div className="flex justify-between items-center">
+                    <div className="w-12 h-12 bg-bg border border-border-hairline flex items-center justify-center text-ink/60 group-hover:text-burgundy transition-colors">
+                      {item.icon}
+                    </div>
+                    <button className={cn(
+                      "px-4 py-1.5 text-[10px] font-black uppercase tracking-widest transition-all",
+                      item.status === 'Connected' ? "bg-status-success/10 text-status-success border border-status-success/20" : "border border-border-hairline text-ink/60 hover:bg-bg"
+                    )}>
+                      {item.status}
+                    </button>
+                  </div>
+                  <div>
+                    <p className="text-sm font-black uppercase tracking-widest text-ink">{item.name}</p>
+                    <p className="text-[11px] font-editorial italic text-ink/60 mt-1">{item.desc}</p>
+                  </div>
+                </div>
+              ))}
+            </div>
+          </div>
+        </div>
+
+        <div className="col-span-12 lg:col-span-4 space-y-8">
           <div className="flex justify-between items-center">
             <h3 className="text-2xl font-serif font-bold text-ink">Webhooks</h3>
             <button 
@@ -1231,8 +1267,392 @@ const Integrations = () => {
   );
 };
 
+const MediaLibrary = () => {
+  const [assets, setAssets] = useState<any[]>([]);
+  const [isUploading, setIsUploading] = useState(false);
+  const [dragActive, setDragActive] = useState(false);
+
+  useEffect(() => {
+    api.getAssets().then(setAssets);
+  }, []);
+
+  const handleDrag = (e: React.DragEvent) => {
+    e.preventDefault();
+    e.stopPropagation();
+    if (e.type === "dragenter" || e.type === "dragover") setDragActive(true);
+    else if (e.type === "dragleave") setDragActive(false);
+  };
+
+  const handleDrop = async (e: React.DragEvent) => {
+    e.preventDefault();
+    e.stopPropagation();
+    setDragActive(false);
+    if (e.dataTransfer.files && e.dataTransfer.files[0]) {
+      await uploadFile(e.dataTransfer.files[0]);
+    }
+  };
+
+  const uploadFile = async (file: File) => {
+    setIsUploading(true);
+    // In a real app, we'd upload to S3/Cloudinary. 
+    // Here we simulate by creating a local asset entry.
+    const reader = new FileReader();
+    reader.onloadend = async () => {
+      const newAsset = await api.addAsset({
+        name: file.name,
+        url: reader.result as string,
+        type: file.type.startsWith('image/') ? 'IMAGE' : 'FILE',
+        metadata: { size: file.size, lastModified: file.lastModified }
+      });
+      setAssets(prev => [newAsset, ...prev]);
+      setIsUploading(false);
+    };
+    reader.readAsDataURL(file);
+  };
+
+  const handleDelete = async (id: string) => {
+    if (confirm("Delete this asset permanently?")) {
+      await api.deleteAsset(id);
+      setAssets(prev => prev.filter(a => a.id !== id));
+    }
+  };
+
+  return (
+    <div className="space-y-16">
+      <SectionHeader 
+        title="Media Library" 
+        subtitle="Centralized asset management for your editorial dispatches."
+        guideKey="media-library"
+      />
+
+      <div 
+        onDragEnter={handleDrag}
+        onDragLeave={handleDrag}
+        onDragOver={handleDrag}
+        onDrop={handleDrop}
+        className={cn(
+          "border-2 border-dashed p-20 text-center transition-all group relative",
+          dragActive ? "border-burgundy bg-burgundy/5" : "border-border-hairline hover:border-burgundy/40"
+        )}
+      >
+        <div className="space-y-4">
+          <div className="w-16 h-16 bg-surface border border-border-hairline flex items-center justify-center mx-auto text-ink/20 group-hover:text-burgundy transition-colors">
+            {isUploading ? <Loader2 className="animate-spin" size={32} /> : <ImageIcon size={32} />}
+          </div>
+          <div className="space-y-2">
+            <p className="text-xl font-serif font-bold">Drop assets here to upload</p>
+            <p className="text-[10px] font-mono text-ink/40 uppercase tracking-widest">Supports JPG, PNG, GIF up to 10MB</p>
+          </div>
+          <label className="inline-block px-8 py-3 bg-ink text-white text-[10px] font-black uppercase tracking-widest cursor-pointer hover:bg-burgundy transition-all">
+            Select Files
+            <input type="file" className="hidden" onChange={(e) => e.target.files?.[0] && uploadFile(e.target.files[0])} />
+          </label>
+        </div>
+      </div>
+
+      <div className="grid grid-cols-12 gap-6">
+        {assets.map(asset => (
+          <div key={asset.id} className="col-span-12 sm:col-span-6 lg:col-span-3 bg-surface border border-border-hairline group overflow-hidden">
+            <div className="aspect-square bg-bg relative overflow-hidden">
+              {asset.type === 'IMAGE' ? (
+                <img src={asset.url} alt={asset.name} className="w-full h-full object-cover grayscale group-hover:grayscale-0 transition-all duration-500" referrerPolicy="no-referrer" />
+              ) : (
+                <div className="w-full h-full flex items-center justify-center text-ink/20">
+                  <FileText size={48} />
+                </div>
+              )}
+              <div className="absolute inset-0 bg-ink/60 opacity-0 group-hover:opacity-100 transition-opacity flex items-center justify-center gap-4">
+                <button className="p-3 bg-white text-ink hover:bg-burgundy hover:text-white transition-all rounded-full">
+                  <Eye size={18} />
+                </button>
+                <button onClick={() => handleDelete(asset.id)} className="p-3 bg-white text-ink hover:bg-burgundy hover:text-white transition-all rounded-full">
+                  <Trash2 size={18} />
+                </button>
+              </div>
+            </div>
+            <div className="p-4 border-t border-border-hairline">
+              <p className="text-[10px] font-black uppercase tracking-widest truncate">{asset.name}</p>
+              <div className="flex justify-between items-center mt-2">
+                <span className="text-[9px] font-mono text-ink/40 uppercase">{asset.type}</span>
+                <span className="text-[9px] font-mono text-ink/40 uppercase">{new Date(asset.createdAt).toLocaleDateString()}</span>
+              </div>
+            </div>
+          </div>
+        ))}
+      </div>
+    </div>
+  );
+};
+
+const LiveActivityFeed = () => {
+  const { liveActivities } = useCollaboration();
+
+  const getIcon = (type: string) => {
+    switch (type) {
+      case 'OPEN': return <MailOpen size={14} className="text-status-success" />;
+      case 'CLICK': return <MousePointer2 size={14} className="text-burgundy" />;
+      case 'BOUNCE': return <AlertCircle size={14} className="text-burgundy" />;
+      case 'BEHAVIORAL': return <Zap size={14} className="text-burgundy" />;
+      default: return <Activity size={14} className="text-ink/40" />;
+    }
+  };
+
+  const getLabel = (activity: any) => {
+    if (activity.type === 'BEHAVIORAL') {
+      return `performed ${activity.eventName.replace(/_/g, ' ').toLowerCase()}`;
+    }
+    switch (activity.type) {
+      case 'OPEN': return 'opened a broadcast';
+      case 'CLICK': return 'clicked a link';
+      case 'SENT': return 'received a broadcast';
+      case 'BOUNCE': return 'email bounced';
+      case 'COMPLAINT': return 'marked as spam';
+      default: return 'interacted with system';
+    }
+  };
+
+  return (
+    <div className="bg-surface border border-border-hairline p-6 space-y-6">
+      <div className="flex justify-between items-center border-b border-border-hairline pb-4">
+        <div className="flex items-center gap-2">
+          <Activity size={16} className="text-burgundy animate-pulse" />
+          <h3 className="text-[10px] font-black uppercase tracking-widest text-ink">Live Activity Feed</h3>
+        </div>
+        <span className="text-[9px] font-mono text-ink/40 uppercase">Real-time Dispatch</span>
+      </div>
+
+      <div className="space-y-4 max-h-[400px] overflow-y-auto pr-2 custom-scrollbar">
+        {liveActivities.length === 0 ? (
+          <div className="py-12 text-center space-y-2">
+            <p className="text-xs font-editorial italic text-ink/40">Waiting for live signals...</p>
+            <div className="flex justify-center gap-1">
+              {[1, 2, 3].map(i => (
+                <div key={i} className="w-1 h-1 bg-burgundy/20 rounded-full animate-bounce" style={{ animationDelay: `${i * 0.2}s` }} />
+              ))}
+            </div>
+          </div>
+        ) : (
+          <AnimatePresence initial={false}>
+            {liveActivities.map((activity, idx) => (
+              <motion.div
+                key={activity.id || idx}
+                initial={{ opacity: 0, x: -20 }}
+                animate={{ opacity: 1, x: 0 }}
+                className="flex gap-4 group"
+              >
+                <div className="flex flex-col items-center gap-1">
+                  <div className="w-8 h-8 rounded-full bg-bg border border-border-hairline flex items-center justify-center group-hover:border-burgundy transition-colors">
+                    {getIcon(activity.type)}
+                  </div>
+                  <div className="w-px h-full bg-border-hairline group-last:hidden" />
+                </div>
+                <div className="flex-1 pb-4">
+                  <div className="flex justify-between items-start">
+                    <p className="text-xs font-bold text-ink">{activity.contactName}</p>
+                    <span className="text-[8px] font-mono text-ink/40 uppercase">
+                      {new Date(activity.timestamp).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', second: '2-digit' })}
+                    </span>
+                  </div>
+                  <p className="text-[10px] font-serif italic text-ink/60 mt-0.5">
+                    {getLabel(activity)}
+                  </p>
+                  {activity.properties?.productId && (
+                    <span className="inline-block mt-2 px-2 py-0.5 bg-burgundy/5 border border-burgundy/10 text-[8px] font-black uppercase text-burgundy">
+                      Product: {activity.properties.productId}
+                    </span>
+                  )}
+                </div>
+              </motion.div>
+            ))}
+          </AnimatePresence>
+        )}
+      </div>
+    </div>
+  );
+};
+
+const PreferenceCenter = () => {
+  const { token } = useParams<{ token: string }>();
+  const [data, setData] = useState<any>(null);
+  const [loading, setLoading] = useState(true);
+  const [saving, setSaving] = useState(false);
+  const [success, setSuccess] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+
+  useEffect(() => {
+    if (token) {
+      api.getPublicPreferences(token)
+        .then(res => {
+          if (res.error) setError(res.error);
+          else setData(res);
+        })
+        .catch(() => setError("Failed to load preferences"))
+        .finally(() => setLoading(false));
+    }
+  }, [token]);
+
+  const handleSave = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!token) return;
+    setSaving(true);
+    try {
+      await api.updatePublicPreferences(token, {
+        listIds: data.memberships,
+        emailConsent: data.contact.emailConsent,
+        smsConsent: data.contact.smsConsent,
+        whatsappConsent: data.contact.whatsappConsent,
+      });
+      setSuccess(true);
+      setTimeout(() => setSuccess(false), 3000);
+    } catch (err) {
+      setError("Failed to save preferences");
+    } finally {
+      setSaving(false);
+    }
+  };
+
+  if (loading) return (
+    <div className="min-h-screen bg-surface flex items-center justify-center">
+      <Loader2 className="animate-spin text-burgundy" size={32} />
+    </div>
+  );
+
+  if (error || !data) return (
+    <div className="min-h-screen bg-surface flex items-center justify-center p-6">
+      <div className="max-w-md w-full bg-white border border-border-hairline p-8 text-center space-y-4">
+        <AlertCircle className="mx-auto text-burgundy" size={48} />
+        <h2 className="font-serif text-2xl font-bold">Access Denied</h2>
+        <p className="text-sm text-ink/60">{error || "This preference link is invalid or has expired."}</p>
+        <Link to="/" className="btn-primary inline-block px-8 py-2 text-xs">Return Home</Link>
+      </div>
+    </div>
+  );
+
+  return (
+    <div className="min-h-screen bg-surface py-12 px-6">
+      <div className="max-w-2xl mx-auto space-y-12">
+        <div className="text-center space-y-4">
+          {data.organization.logoUrl ? (
+            <img src={data.organization.logoUrl} alt={data.organization.name} className="h-12 mx-auto grayscale" referrerPolicy="no-referrer" />
+          ) : (
+            <h1 className="font-sans font-black uppercase tracking-[0.2em] text-xl">{data.organization.name}</h1>
+          )}
+          <div className="h-px w-24 bg-ink mx-auto" />
+          <h2 className="font-serif text-3xl font-bold italic">Subscription Preference Center</h2>
+          <p className="text-sm text-ink/60 max-w-md mx-auto">
+            Manage how you receive updates from us. Your privacy and preferences are our priority.
+          </p>
+        </div>
+
+        <form onSubmit={handleSave} className="bg-white border border-border-hairline p-8 sm:p-12 space-y-10">
+          <section className="space-y-6">
+            <div className="border-b border-ink pb-2">
+              <h3 className="font-sans font-black uppercase tracking-widest text-xs">Channels</h3>
+            </div>
+            <div className="grid grid-cols-1 sm:grid-cols-3 gap-6">
+              {[
+                { id: 'emailConsent', label: 'Email', icon: Mail },
+                { id: 'smsConsent', label: 'SMS', icon: Smartphone },
+                { id: 'whatsappConsent', label: 'WhatsApp', icon: MessageSquare }
+              ].map(channel => (
+                <label key={channel.id} className="flex flex-col items-center p-4 border border-border-hairline cursor-pointer hover:bg-surface transition-colors group">
+                  <input 
+                    type="checkbox" 
+                    className="hidden"
+                    checked={data.contact[channel.id]}
+                    onChange={e => setData({
+                      ...data, 
+                      contact: { ...data.contact, [channel.id]: e.target.checked }
+                    })}
+                  />
+                  <channel.icon size={24} className={cn("mb-3 transition-colors", data.contact[channel.id] ? "text-burgundy" : "text-ink/20")} />
+                  <span className="text-[10px] font-black uppercase tracking-widest mb-2">{channel.label}</span>
+                  <div className={cn(
+                    "w-10 h-5 rounded-full relative transition-colors",
+                    data.contact[channel.id] ? "bg-burgundy" : "bg-ink/10"
+                  )}>
+                    <div className={cn(
+                      "absolute top-1 w-3 h-3 bg-white rounded-full transition-all",
+                      data.contact[channel.id] ? "left-6" : "left-1"
+                    )} />
+                  </div>
+                </label>
+              ))}
+            </div>
+          </section>
+
+          <section className="space-y-6">
+            <div className="border-b border-ink pb-2">
+              <h3 className="font-sans font-black uppercase tracking-widest text-xs">Topics & Interests</h3>
+            </div>
+            <div className="space-y-3">
+              {data.availableLists.map((list: any) => (
+                <label key={list.id} className="flex items-center justify-between p-4 border border-border-hairline hover:bg-surface cursor-pointer group">
+                  <div className="space-y-1">
+                    <p className="text-sm font-bold">{list.name}</p>
+                    <p className="text-[10px] font-serif italic text-ink/60">{list.description || "Updates regarding " + list.name}</p>
+                  </div>
+                  <input 
+                    type="checkbox"
+                    className="w-5 h-5 border-2 border-ink rounded-none checked:bg-burgundy focus:ring-0"
+                    checked={data.memberships.includes(list.id)}
+                    onChange={e => {
+                      const newMemberships = e.target.checked 
+                        ? [...data.memberships, list.id]
+                        : data.memberships.filter((id: string) => id !== list.id);
+                      setData({ ...data, memberships: newMemberships });
+                    }}
+                  />
+                </label>
+              ))}
+            </div>
+          </section>
+
+          <div className="pt-6 border-t border-border-hairline flex flex-col sm:flex-row items-center justify-between gap-6">
+            <div className="text-[10px] font-mono text-ink/40 uppercase tracking-widest">
+              Last updated: {new Date().toLocaleDateString()}
+            </div>
+            <button 
+              type="submit"
+              disabled={saving}
+              className="btn-primary px-12 py-3 text-xs w-full sm:w-auto flex items-center justify-center gap-2"
+            >
+              {saving ? <Loader2 className="animate-spin" size={14} /> : <ShieldCheck size={14} />}
+              {saving ? 'Saving...' : 'Update Preferences'}
+            </button>
+          </div>
+
+          <AnimatePresence>
+            {success && (
+              <motion.div 
+                initial={{ opacity: 0, y: 10 }}
+                animate={{ opacity: 1, y: 0 }}
+                exit={{ opacity: 0 }}
+                className="bg-status-success/10 border border-status-success/20 p-4 text-center"
+              >
+                <p className="text-xs font-black uppercase tracking-widest text-status-success">Preferences Updated Successfully</p>
+              </motion.div>
+            )}
+          </AnimatePresence>
+        </form>
+
+        <div className="text-center space-y-4">
+          <p className="text-[10px] font-mono text-ink/40 uppercase tracking-widest">
+            GDPR & KVKK Compliant • Secure Connection
+          </p>
+          <div className="flex justify-center gap-6">
+            <Link to="/" className="text-[10px] font-black uppercase text-ink/40 hover:text-burgundy">Privacy Policy</Link>
+            <Link to="/" className="text-[10px] font-black uppercase text-ink/40 hover:text-burgundy">Terms of Use</Link>
+          </div>
+        </div>
+      </div>
+    </div>
+  );
+};
+
 const Home = () => {
   const { user, refreshUser } = useAuth();
+  const { joinRoom, leaveRoom } = useCollaboration();
   const [stats, setStats] = useState<DashboardStats | null>(null);
   const [recentCampaigns, setRecentCampaigns] = useState<Campaign[]>([]);
   const [scheduledCampaigns, setScheduledCampaigns] = useState<Campaign[]>([]);
@@ -1240,13 +1660,17 @@ const Home = () => {
 
   useEffect(() => {
     if (user) {
+      joinRoom('dashboard-live');
       api.getSummary().then(setStats);
       api.getCampaigns().then(res => {
         setRecentCampaigns(res.filter(c => c.status === 'SENT').slice(0, 3));
         setScheduledCampaigns(res.filter(c => c.status === 'SCHEDULED').slice(0, 3));
       });
     }
-  }, [user]);
+    return () => {
+      leaveRoom('dashboard-live');
+    };
+  }, [user, joinRoom, leaveRoom]);
 
   const handleSSOLogin = async () => {
     try {
@@ -1357,7 +1781,9 @@ const Home = () => {
       {/* Main Content Grid */}
       <div className="newspaper-grid">
         {/* Left Column: Lead Story */}
-        <div className="col-span-12 lg:col-span-8 space-y-8 pr-8 border-r border-border-hairline">
+        <div className="col-span-12 lg:col-span-8 space-y-12 pr-8 border-r border-border-hairline">
+          <AudienceHealthChart />
+          
           <div className="space-y-4">
             <p className="font-sans font-black uppercase tracking-[0.2em] text-burgundy text-[10px]">Latest Dispatch Performance</p>
             {leadCampaign ? (
@@ -1407,6 +1833,8 @@ const Home = () => {
 
         {/* Right Column: Sidebar */}
         <div className="col-span-12 lg:col-span-4 space-y-12">
+          <LiveActivityFeed />
+          
           <div className="space-y-6">
             <div className="flex justify-between items-center border-b border-ink pb-2">
               <h3 className="font-sans font-black uppercase tracking-widest text-xs">Upcoming Broadcasts</h3>
@@ -1507,6 +1935,7 @@ const Campaigns = () => {
   const [aiBrief, setAiBrief] = useState('');
   const [aiTone, setAiTone] = useState('Professional');
   const [isAiGenerating, setIsAiGenerating] = useState(false);
+  const [isSimulatingAB, setIsSimulatingAB] = useState(false);
 
   const handleAiGenerate = async () => {
     if (!aiBrief) return;
@@ -1621,6 +2050,20 @@ const Campaigns = () => {
     setAbResults(null);
     setSelectedAbCampaign(null);
     api.getCampaigns().then(setCampaigns);
+  };
+
+  const handleSimulateAB = async () => {
+    if (!selectedAbCampaign) return;
+    setIsSimulatingAB(true);
+    try {
+      await api.simulateAB(selectedAbCampaign.id);
+      const results = await api.getABResults(selectedAbCampaign.id);
+      setAbResults(results);
+    } catch (error) {
+      console.error("Simulation failed", error);
+    } finally {
+      setIsSimulatingAB(false);
+    }
   };
 
   const viewABResults = async (camp: Campaign) => {
@@ -2532,6 +2975,16 @@ const Campaigns = () => {
                   <p className="text-[10px] font-mono uppercase tracking-widest">
                     AI Recommendation: <span className="text-emerald-400 font-black">Variation {abResults.variationA.rate > abResults.variationB.rate ? 'A' : 'B'}</span> is performing better based on your {selectedAbCampaign.winnerCriteria === 'OPEN_RATE' ? 'open rate' : 'click rate'} criteria.
                   </p>
+                </div>
+                <div className="pt-4 border-t border-border-hairline flex justify-center">
+                  <button 
+                    onClick={handleSimulateAB}
+                    disabled={isSimulatingAB}
+                    className="flex items-center gap-2 text-[10px] font-black uppercase tracking-widest text-burgundy hover:underline disabled:opacity-50"
+                  >
+                    <RefreshCw size={12} className={cn(isSimulatingAB && "animate-spin")} />
+                    {isSimulatingAB ? 'Simulating...' : 'Simulate Test Results'}
+                  </button>
                 </div>
               </div>
             </motion.div>
@@ -4163,13 +4616,17 @@ const Audiences = () => {
   const [isAdding, setIsAdding] = useState(false);
   const [isAddingSegment, setIsAddingSegment] = useState(false);
   const [isValidating, setIsValidating] = useState(false);
-  const [newSegment, setNewSegment] = useState({ name: '', rules: '[]' });
+  const [newSegment, setNewSegment] = useState<{ name: string, rules: any[] }>({ name: '', rules: [] });
+  const [segmentCounts, setSegmentCounts] = useState<Record<string, number>>({});
+  const [isSimulatingEvent, setIsSimulatingEvent] = useState(false);
   const [activeSegmentId, setActiveSegmentId] = useState<string | null>(null);
   const [preferenceContact, setPreferenceContact] = useState<any>(null);
   const [notificationContact, setNotificationContact] = useState<any>(null);
   const [notifications, setNotifications] = useState<any[]>([]);
   const [churnRisks, setChurnRisks] = useState<Record<string, any>>({});
   const [isPredicting, setIsPredicting] = useState<string | null>(null);
+  const [isPredictingAll, setIsPredictingAll] = useState(false);
+  const [churnSummary, setChurnSummary] = useState<{ high: number, medium: number, low: number, topAtRisk: any[] } | null>(null);
   const [availableLists, setAvailableLists] = useState<any[]>([]);
   const [selectedLists, setSelectedLists] = useState<string[]>([]);
 
@@ -4187,15 +4644,90 @@ const Audiences = () => {
 
   useEffect(() => {
     api.getContacts().then(setContacts);
-    api.getSegments().then(setSegments);
+    api.getSegments().then(async (segs) => {
+      setSegments(segs);
+      const counts: Record<string, number> = {};
+      for (const seg of segs) {
+        const { count } = await api.getSegmentCount(seg.id);
+        counts[seg.id] = count;
+      }
+      setSegmentCounts(counts);
+    });
   }, []);
+
+  useEffect(() => {
+    if (activeSegmentId === 'CHURN_RISK') {
+      // Filter locally for demo, or fetch from a specific endpoint
+      api.getContacts().then(all => {
+        setContacts(all.filter(c => c.engagementScore < 40));
+      });
+    } else if (activeSegmentId) {
+      api.getSegmentContacts(activeSegmentId).then(setContacts);
+    } else {
+      api.getContacts().then(setContacts);
+    }
+  }, [activeSegmentId]);
 
   const handleCreateSegment = async (e: React.FormEvent) => {
     e.preventDefault();
-    await api.addSegment(newSegment);
-    api.getSegments().then(setSegments);
+    await api.addSegment({
+      name: newSegment.name,
+      rules: JSON.stringify(newSegment.rules)
+    });
+    const updatedSegments = await api.getSegments();
+    setSegments(updatedSegments);
+    
+    const counts: Record<string, number> = {};
+    for (const seg of updatedSegments) {
+      const { count } = await api.getSegmentCount(seg.id);
+      counts[seg.id] = count;
+    }
+    setSegmentCounts(counts);
+    
     setIsAddingSegment(false);
-    setNewSegment({ name: '', rules: '[]' });
+    setNewSegment({ name: '', rules: [] });
+  };
+
+  const addRule = (type: 'attribute' | 'event') => {
+    const rule = type === 'attribute' 
+      ? { type: 'attribute', field: 'status', operator: 'equals', value: 'SUBSCRIBED' }
+      : { type: 'event', eventName: 'PRODUCT_VIEWED', timeframe: '3d' };
+    setNewSegment({ ...newSegment, rules: [...newSegment.rules, rule] });
+  };
+
+  const removeRule = (index: number) => {
+    const rules = [...newSegment.rules];
+    rules.splice(index, 1);
+    setNewSegment({ ...newSegment, rules });
+  };
+
+  const updateRule = (index: number, updates: any) => {
+    const rules = [...newSegment.rules];
+    rules[index] = { ...rules[index], ...updates };
+    setNewSegment({ ...newSegment, rules });
+  };
+
+  const handleSimulateEvent = async () => {
+    if (contacts.length === 0) return;
+    setIsSimulatingEvent(true);
+    const randomContact = contacts[Math.floor(Math.random() * contacts.length)];
+    const events = ['PRODUCT_VIEWED', 'CART_ABANDONED', 'CHECKOUT_STARTED'];
+    const eventName = events[Math.floor(Math.random() * events.length)];
+    
+    await api.trackBehavioralEvent({
+      email: randomContact.email,
+      name: eventName,
+      properties: { productId: 'prod_' + Math.floor(Math.random() * 1000) }
+    });
+    
+    // Refresh counts
+    const counts: Record<string, number> = {};
+    for (const seg of segments) {
+      const { count } = await api.getSegmentCount(seg.id);
+      counts[seg.id] = count;
+    }
+    setSegmentCounts(counts);
+    setIsSimulatingEvent(false);
   };
 
   const validateEmail = (email: string) => {
@@ -4235,6 +4767,28 @@ const Audiences = () => {
     }
   };
 
+  const handlePredictAllChurn = async () => {
+    setIsPredictingAll(true);
+    try {
+      const res = await fetch('/api/ai/churn-prediction', { method: 'POST' });
+      const data = await res.json();
+      setChurnSummary(data);
+      // Also update individual risks for the top ones
+      const newRisks = { ...churnRisks };
+      data.topAtRisk.forEach((p: any) => {
+        const contact = contacts.find(c => c.email === p.email);
+        if (contact) {
+          newRisks[contact.id] = { riskLevel: p.risk, probability: parseFloat(p.prob) / 100, reasons: p.reasons };
+        }
+      });
+      setChurnRisks(newRisks);
+    } catch (e) {
+      console.error("Bulk churn prediction failed", e);
+    } finally {
+      setIsPredictingAll(false);
+    }
+  };
+
   const onSubmit = async (data: ContactFormData) => {
     setIsValidating(true);
     // Simulate a deeper validation check
@@ -4260,9 +4814,19 @@ const Audiences = () => {
         subtitle="Curate and segment your network of recipients."
         guideKey="audience-segments"
         action={
-          <button onClick={() => setIsAdding(true)} className="btn-primary flex items-center gap-2">
-            <Plus size={16} /> Add Contact
-          </button>
+          <div className="flex gap-4">
+            <button 
+              onClick={handleSimulateEvent} 
+              disabled={isSimulatingEvent}
+              className="px-4 py-2 border border-burgundy text-burgundy text-[10px] font-black uppercase tracking-widest hover:bg-burgundy/5 transition-colors flex items-center gap-2"
+            >
+              <Zap size={14} className={cn(isSimulatingEvent && "animate-pulse")} />
+              {isSimulatingEvent ? "Simulating..." : "Simulate Event"}
+            </button>
+            <button onClick={() => setIsAdding(true)} className="btn-primary flex items-center gap-2">
+              <Plus size={16} /> Add Contact
+            </button>
+          </div>
         }
       />
 
@@ -4377,7 +4941,7 @@ const Audiences = () => {
                 <button onClick={() => setIsAddingSegment(false)} className="text-ink/40 hover:text-burgundy">✕</button>
               </div>
 
-              <form onSubmit={handleCreateSegment} className="space-y-4">
+              <form onSubmit={handleCreateSegment} className="space-y-6">
                 <div className="space-y-1">
                   <label className="metric-label">Segment Name</label>
                   <input 
@@ -4391,36 +4955,104 @@ const Audiences = () => {
                 </div>
 
                 <div className="space-y-4">
-                  <p className="text-[10px] font-black uppercase tracking-widest text-ink/40">Criteria Rules</p>
-                  
-                  <div className="space-y-3">
-                    <div className="flex items-center gap-2 p-3 bg-surface border border-border-hairline">
-                      <div className="flex-1">
-                        <p className="text-[10px] font-black uppercase">Engagement Score</p>
-                        <p className="text-xs font-serif italic">is greater than 80</p>
-                      </div>
-                      <Filter size={14} className="text-burgundy" />
-                    </div>
-                    
-                    <div className="flex items-center gap-2 p-3 bg-surface border border-border-hairline">
-                      <div className="flex-1">
-                        <p className="text-[10px] font-black uppercase">Last Interaction</p>
-                        <p className="text-xs font-serif italic">within last 30 days</p>
-                      </div>
-                      <Clock size={14} className="text-burgundy" />
+                  <div className="flex justify-between items-center">
+                    <p className="text-[10px] font-black uppercase tracking-widest text-ink/40">Criteria Rules</p>
+                    <div className="flex gap-2">
+                      <button 
+                        type="button" 
+                        onClick={() => addRule('attribute')}
+                        className="text-[9px] font-black uppercase text-burgundy hover:underline"
+                      >
+                        + Attribute
+                      </button>
+                      <button 
+                        type="button" 
+                        onClick={() => addRule('event')}
+                        className="text-[9px] font-black uppercase text-burgundy hover:underline"
+                      >
+                        + Event
+                      </button>
                     </div>
                   </div>
+                  
+                  <div className="space-y-3 max-h-60 overflow-y-auto pr-2 custom-scrollbar">
+                    {newSegment.rules.map((rule, idx) => (
+                      <div key={idx} className="p-4 bg-surface border border-border-hairline space-y-3 relative group">
+                        <button 
+                          type="button"
+                          onClick={() => removeRule(idx)}
+                          className="absolute top-2 right-2 text-ink/20 hover:text-burgundy opacity-0 group-hover:opacity-100 transition-opacity"
+                        >
+                          <Trash2 size={12} />
+                        </button>
 
-                  <div className="p-4 border border-dashed border-border-hairline text-center">
-                    <button type="button" className="text-[10px] font-black uppercase text-ink/40 hover:text-burgundy flex items-center gap-1 mx-auto">
-                      <Plus size={12} /> Add Rule
-                    </button>
+                        {rule.type === 'attribute' ? (
+                          <div className="grid grid-cols-2 gap-3">
+                            <div className="space-y-1">
+                              <label className="text-[8px] font-black uppercase text-ink/40">Field</label>
+                              <select 
+                                value={rule.field}
+                                onChange={e => updateRule(idx, { field: e.target.value })}
+                                className="w-full bg-transparent border-b border-border-hairline text-[10px] font-bold outline-none"
+                              >
+                                <option value="status">Status</option>
+                                <option value="engagementScore">Engagement Score</option>
+                              </select>
+                            </div>
+                            <div className="space-y-1">
+                              <label className="text-[8px] font-black uppercase text-ink/40">Value</label>
+                              <input 
+                                type="text"
+                                value={rule.value}
+                                onChange={e => updateRule(idx, { value: e.target.value })}
+                                className="w-full bg-transparent border-b border-border-hairline text-[10px] font-bold outline-none"
+                              />
+                            </div>
+                          </div>
+                        ) : (
+                          <div className="grid grid-cols-2 gap-3">
+                            <div className="space-y-1">
+                              <label className="text-[8px] font-black uppercase text-ink/40">Event Name</label>
+                              <select 
+                                value={rule.eventName}
+                                onChange={e => updateRule(idx, { eventName: e.target.value })}
+                                className="w-full bg-transparent border-b border-border-hairline text-[10px] font-bold outline-none"
+                              >
+                                <option value="PRODUCT_VIEWED">Product Viewed</option>
+                                <option value="CART_ABANDONED">Cart Abandoned</option>
+                                <option value="CHECKOUT_STARTED">Checkout Started</option>
+                              </select>
+                            </div>
+                            <div className="space-y-1">
+                              <label className="text-[8px] font-black uppercase text-ink/40">Timeframe</label>
+                              <select 
+                                value={rule.timeframe}
+                                onChange={e => updateRule(idx, { timeframe: e.target.value })}
+                                className="w-full bg-transparent border-b border-border-hairline text-[10px] font-bold outline-none"
+                              >
+                                <option value="2h">Last 2 Hours</option>
+                                <option value="1d">Last 24 Hours</option>
+                                <option value="3d">Last 3 Days</option>
+                                <option value="7d">Last 7 Days</option>
+                                <option value="30d">Last 30 Days</option>
+                              </select>
+                            </div>
+                          </div>
+                        )}
+                      </div>
+                    ))}
+
+                    {newSegment.rules.length === 0 && (
+                      <div className="p-8 border border-dashed border-border-hairline text-center">
+                        <p className="text-xs font-editorial italic text-ink/40">No rules defined. This segment will include all contacts.</p>
+                      </div>
+                    )}
                   </div>
                 </div>
 
                 <div className="pt-4">
                   <button 
-                    type="submit" 
+                    type="submit"
                     className="btn-primary w-full py-3 text-sm"
                   >
                     Create Segment
@@ -4464,11 +5096,27 @@ const Audiences = () => {
                   )}
                 >
                   <span>{s.name}</span>
-                  <div className="flex items-center gap-1 opacity-0 group-hover:opacity-100 transition-opacity">
-                    <Filter size={10} />
+                  <div className="flex items-center gap-3">
+                    <span className="text-[10px] font-black text-ink/40">{segmentCounts[s.id] ?? '...'}</span>
+                    <div className="flex items-center gap-1 opacity-0 group-hover:opacity-100 transition-opacity">
+                      <Filter size={10} />
+                    </div>
                   </div>
                 </button>
               ))}
+              <button 
+                onClick={() => setActiveSegmentId('CHURN_RISK')}
+                className={cn(
+                  "w-full text-left px-4 py-2 text-sm font-medium transition-colors flex justify-between items-center group",
+                  activeSegmentId === 'CHURN_RISK' ? "bg-burgundy text-white" : "hover:bg-surface"
+                )}
+              >
+                <div className="flex items-center gap-2">
+                  <AlertTriangle size={14} className={activeSegmentId === 'CHURN_RISK' ? "text-white" : "text-burgundy"} />
+                  <span>High Churn Risk</span>
+                </div>
+                <span className="text-[10px] font-black text-ink/40">{churnSummary?.high ?? '...'}</span>
+              </button>
             </div>
           </div>
           
@@ -4487,7 +5135,61 @@ const Audiences = () => {
           </div>
         </div>
 
-        <div className="col-span-12 lg:col-span-9">
+        <div className="col-span-12 lg:col-span-9 space-y-8">
+          {churnSummary && (
+            <motion.div 
+              initial={{ opacity: 0, y: -10 }}
+              animate={{ opacity: 1, y: 0 }}
+              className="bg-burgundy/5 border border-burgundy/20 p-6 newspaper-grid gap-6"
+            >
+              <div className="col-span-12 md:col-span-4 space-y-2">
+                <p className="text-[10px] font-black uppercase tracking-widest text-burgundy">AI Churn Analysis</p>
+                <div className="flex items-end gap-4">
+                  <div className="text-4xl font-serif font-bold">{churnSummary.high}</div>
+                  <div className="text-[10px] font-black uppercase tracking-widest text-burgundy pb-1">High Risk Contacts</div>
+                </div>
+              </div>
+              <div className="col-span-12 md:col-span-8">
+                <p className="text-[10px] font-black uppercase tracking-widest text-ink/40 mb-3">Top At-Risk Subscribers</p>
+                <div className="grid grid-cols-2 gap-4">
+                  {churnSummary.topAtRisk.slice(0, 4).map((p, i) => (
+                    <div key={i} className="flex justify-between items-center border-b border-border-hairline pb-2">
+                      <div className="space-y-0.5">
+                        <p className="text-xs font-bold">{p.name}</p>
+                        <p className="text-[9px] font-mono text-ink/40">{p.email}</p>
+                      </div>
+                      <div className="text-right">
+                        <p className="text-[10px] font-black text-burgundy">{p.prob}</p>
+                        <p className="text-[8px] font-black uppercase text-ink/40">Risk</p>
+                      </div>
+                    </div>
+                  ))}
+                </div>
+              </div>
+            </motion.div>
+          )}
+
+          <div className="flex justify-between items-center">
+            <div className="flex gap-4">
+              <button 
+                onClick={handlePredictAllChurn}
+                disabled={isPredictingAll}
+                className="text-[10px] font-black uppercase tracking-widest text-burgundy hover:underline flex items-center gap-2 disabled:opacity-50"
+              >
+                <Sparkles size={12} />
+                {isPredictingAll ? 'Analyzing Audience...' : 'Predict Churn for All'}
+              </button>
+              <button 
+                onClick={handleSimulateEvent}
+                disabled={isSimulatingEvent}
+                className="text-[10px] font-black uppercase tracking-widest text-ink/40 hover:text-burgundy flex items-center gap-2 disabled:opacity-50"
+              >
+                <Zap size={12} />
+                {isSimulatingEvent ? 'Simulating...' : 'Simulate Event'}
+              </button>
+            </div>
+          </div>
+
           <table className="w-full text-left border-collapse">
             <thead>
               <tr className="border-b-2 border-ink">
@@ -4495,6 +5197,7 @@ const Audiences = () => {
                 <th className="px-4 py-3 metric-label">Signal Quality</th>
                 <th className="px-4 py-3 metric-label">Status</th>
                 <th className="px-4 py-3 metric-label">Engagement</th>
+                <th className="px-4 py-3 metric-label">Consent</th>
                 <th className="px-4 py-3 metric-label">Churn Risk</th>
                 <th className="px-4 py-3 metric-label">Tags</th>
                 <th className="px-4 py-3 metric-label text-right">Joined</th>
@@ -4537,6 +5240,19 @@ const Audiences = () => {
                         <div className="h-full bg-brass" style={{ width: `${contact.engagementScore}%` }} />
                       </div>
                       <span className="font-mono text-[10px] text-ink/40">{contact.engagementScore}</span>
+                    </div>
+                  </td>
+                  <td className="px-4 py-4">
+                    <div className="flex gap-2">
+                      <div className={cn("p-1 border", contact.emailConsent ? "border-emerald-500/30 bg-emerald-500/5 text-emerald-600" : "border-ink/10 bg-ink/5 text-ink/20")} title="Email Consent">
+                        <Mail size={10} />
+                      </div>
+                      <div className={cn("p-1 border", contact.smsConsent ? "border-emerald-500/30 bg-emerald-500/5 text-emerald-600" : "border-ink/10 bg-ink/5 text-ink/20")} title="SMS Consent">
+                        <Smartphone size={10} />
+                      </div>
+                      <div className={cn("p-1 border", contact.whatsappConsent ? "border-emerald-500/30 bg-emerald-500/5 text-emerald-600" : "border-ink/10 bg-ink/5 text-ink/20")} title="WhatsApp Consent">
+                        <MessageSquare size={10} />
+                      </div>
                     </div>
                   </td>
                   <td className="px-4 py-4">
@@ -7746,6 +8462,7 @@ export default function App() {
               <Route path="/campaigns/:id" element={<ProtectedRoute><CampaignDetail /></ProtectedRoute>} />
               <Route path="/audiences" element={<ProtectedRoute permission="contact:edit"><Audiences /></ProtectedRoute>} />
               <Route path="/automations" element={<ProtectedRoute permission="automation:edit"><Automations /></ProtectedRoute>} />
+              <Route path="/media" element={<ProtectedRoute><MediaLibrary /></ProtectedRoute>} />
               <Route path="/commerce" element={<ProtectedRoute><Commerce /></ProtectedRoute>} />
               <Route path="/validation" element={<ProtectedRoute><EmailValidation /></ProtectedRoute>} />
               <Route path="/collaboration" element={<ProtectedRoute permission="team:manage"><Collaboration /></ProtectedRoute>} />
@@ -7756,6 +8473,7 @@ export default function App() {
               <Route path="/infrastructure" element={<ProtectedRoute permission="infrastructure:manage"><Infrastructure /></ProtectedRoute>} />
               <Route path="/data-layer" element={<ProtectedRoute permission="infrastructure:manage"><DataLayer /></ProtectedRoute>} />
               <Route path="/dispatch/:id" element={<DispatchView />} />
+              <Route path="/preferences/:token" element={<PreferenceCenter />} />
               <Route path="*" element={<Navigate to="/" />} />
             </Routes>
           </motion.div>

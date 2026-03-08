@@ -44,6 +44,7 @@ model Organization {
   assets      Asset[]
   validationLogs ValidationLog[]
   bulkValidationJobs BulkValidationJob[]
+  behavioralEvents BehavioralEvent[]
 
   // SSO Config
   ssoEnabled      Boolean  @default(false)
@@ -215,6 +216,13 @@ model Contact {
   source         String?
   engagementScore Int         @default(0)
   customFields   String       @default("{}") // JSON string for SQLite
+  
+  // Channel Preferences
+  emailConsent   Boolean      @default(true)
+  smsConsent     Boolean      @default(false)
+  whatsappConsent Boolean     @default(false)
+  preferenceToken String?     @unique // For public preference center access
+  
   organizationId String
   organization   Organization @relation(fields: [organizationId], references: [id])
   createdAt      DateTime     @default(now())
@@ -223,6 +231,7 @@ model Contact {
   tags           Tag[]
   listMemberships ListMembership[]
   events         Event[]
+  behavioralEvents BehavioralEvent[]
   revenue        Revenue[]
   consentLogs    ConsentLog[]
   dataRequests   DataRequest[]
@@ -364,14 +373,26 @@ model ApprovalRequest {
 
 model Event {
   id             String   @id @default(cuid())
-  type           String   // SENT, OPEN, CLICK, BOUNCE, COMPLAINT, UNSUBSCRIBE
-  metadata       String   @default("{}") // JSON string for link URLs, etc.
+  type           String   // SENT, OPEN, CLICK, BOUNCE, COMPLAINT, UNSUBSCRIBE, CUSTOM
+  name           String?  // For CUSTOM events (e.g., "PRODUCT_VIEWED", "CART_ABANDONED")
+  metadata       String   @default("{}") // JSON string for link URLs, product IDs, etc.
   campaignId     String?
   campaign       Campaign? @relation(fields: [campaignId], references: [id])
   variationId    String?
   variation      CampaignVariation? @relation(fields: [variationId], references: [id])
   contactId      String
   contact        Contact  @relation(fields: [contactId], references: [id])
+  timestamp      DateTime @default(now())
+}
+
+model BehavioralEvent {
+  id             String   @id @default(cuid())
+  name           String   // e.g., "PRODUCT_VIEWED", "CART_ABANDONED", "CHECKOUT_STARTED"
+  properties     String   @default("{}") // JSON string for event properties (price, product_id, etc.)
+  contactId      String
+  contact        Contact  @relation(fields: [contactId], references: [id])
+  organizationId String
+  organization   Organization @relation(fields: [organizationId], references: [id])
   timestamp      DateTime @default(now())
 }
 
