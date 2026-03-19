@@ -1,4 +1,5 @@
 import express from "express";
+import cron from "node-cron";
 import { createServer as createViteServer } from "vite";
 import path from "path";
 import { fileURLToPath } from "url";
@@ -1055,6 +1056,59 @@ async function startServer() {
     }
   });
 
+  app.post("/api/contacts/bulk", async (req, res) => {
+    const org = await prisma.organization.findFirst();
+    if (!org) return res.status(404).json({ error: "Organization not found" });
+    
+    const { contacts } = req.body;
+    if (!Array.isArray(contacts)) {
+      return res.status(400).json({ error: "Invalid payload" });
+    }
+
+    const emailRegex = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
+    let imported = 0;
+    let failed = 0;
+
+    for (const c of contacts) {
+      if (!c.email || !emailRegex.test(c.email)) {
+        failed++;
+        continue;
+      }
+      try {
+        await prisma.contact.upsert({
+          where: { email_organizationId: { email: c.email, organizationId: org.id } },
+          update: {
+            firstName: c.firstName || undefined,
+            lastName: c.lastName || undefined,
+            tags: c.tags ? {
+              connectOrCreate: c.tags.split(",").map((t: string) => ({
+                where: { name: t.trim() },
+                create: { name: t.trim() },
+              })).filter((t: any) => t.where.name),
+            } : undefined,
+          },
+          create: {
+            email: c.email,
+            firstName: c.firstName || "",
+            lastName: c.lastName || "",
+            organizationId: org.id,
+            tags: c.tags ? {
+              connectOrCreate: c.tags.split(",").map((t: string) => ({
+                where: { name: t.trim() },
+                create: { name: t.trim() },
+              })).filter((t: any) => t.where.name),
+            } : undefined,
+          },
+        });
+        imported++;
+      } catch (e) {
+        failed++;
+      }
+    }
+
+    res.json({ imported, failed });
+  });
+
   // Campaigns
   app.get("/api/campaigns", async (req, res) => {
     const org = await prisma.organization.findFirst();
@@ -1069,7 +1123,7 @@ async function startServer() {
   app.post("/api/campaigns", async (req, res) => {
     const org = await prisma.organization.findFirst();
     const { 
-      name, subject, previewText, fromName, fromEmail, content, type, scheduledAt, timezone,
+      name, subject, previewText, fromName, fromEmail, content, type, scheduledAt, timezone, perUserTimezone,
       subjectB, contentB, testPercentage, testDuration, winnerCriteria, channel
     } = req.body;
     const campaign = await prisma.campaign.create({
@@ -1088,6 +1142,7 @@ async function startServer() {
         testDuration: testDuration ? parseInt(testDuration) : undefined,
         winnerCriteria,
         timezone: timezone || "UTC",
+        perUserTimezone: perUserTimezone || false,
         scheduledAt: scheduledAt ? new Date(scheduledAt) : null,
         status: scheduledAt ? "SCHEDULED" : "DRAFT",
         organizationId: org!.id,
@@ -2678,6 +2733,45 @@ app.delete("/api/assets/:id", async (req, res) => {
     res.json({ success: true });
   } catch (error) {
     res.status(500).json({ error: "Failed to delete asset" });
+  }
+});
+
+// Schedule campaigns cron job
+cron.schedule('* * * * *', async () => {
+  try {
+    const now = new Date();
+    const scheduledCampaigns = await prisma.campaign.findMany({
+      where: {
+        status: 'SCHEDULED',
+        scheduledAt: {
+          lte: now
+        }
+      }
+    });
+
+    for (const campaign of scheduledCampaigns) {
+      // If perUserTimezone is enabled, we need to handle it differently
+      // For now, we'll just send it if it's past the scheduled time in UTC
+      // A full implementation would check the user's timezone and send accordingly
+      // which might require a more complex query or processing loop
+      
+      // Update status to SENDING
+      await prisma.campaign.update({
+        where: { id: campaign.id },
+        data: { status: 'SENDING' }
+      });
+
+      // Simulate sending process
+      setTimeout(async () => {
+        await prisma.campaign.update({
+          where: { id: campaign.id },
+          data: { status: 'SENT', sentAt: new Date() }
+        });
+        console.log(`Campaign ${campaign.id} sent successfully.`);
+      }, 2000); // Simulate 2 seconds sending time
+    }
+  } catch (error) {
+    console.error("Error processing scheduled campaigns:", error);
   }
 });
 

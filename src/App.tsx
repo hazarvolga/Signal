@@ -63,7 +63,9 @@ import {
   RotateCcw,
   Trophy,
   Archive,
-  FileEdit
+  FileEdit,
+  Upload,
+  Check
 } from 'lucide-react';
 import { motion, AnimatePresence } from 'motion/react';
 import { GoogleGenAI } from "@google/genai";
@@ -72,6 +74,7 @@ import { api } from './services/api';
 import { geminiService } from './services/geminiService';
 import { User, Contact, Template, Campaign, DashboardStats, Segment, CustomFieldDefinition, Flow, Event, Tag } from './types';
 import { format } from 'date-fns';
+import { fromZonedTime, formatInTimeZone } from 'date-fns-tz';
 import { 
   BarChart, 
   Bar, 
@@ -97,6 +100,7 @@ import { twMerge } from 'tailwind-merge';
 import { useForm } from 'react-hook-form';
 import { zodResolver } from '@hookform/resolvers/zod';
 import { z } from 'zod';
+import Papa from 'papaparse';
 import ReactFlow, { 
   Background, 
   Controls, 
@@ -1889,6 +1893,22 @@ const Home = () => {
   );
 };
 
+const getUtcDateString = (localDate: Date | null, timeZone: string): string => {
+  if (!localDate) return '';
+  const dateStr = format(localDate, "yyyy-MM-dd'T'HH:mm:ss");
+  const utcDate = fromZonedTime(dateStr, timeZone);
+  return utcDate.toISOString();
+};
+
+const getLocalDateForPicker = (utcDateString: string | null, timeZone: string): Date | null => {
+  if (!utcDateString) return null;
+  const dateStr = formatInTimeZone(new Date(utcDateString), timeZone, "yyyy-MM-dd'T'HH:mm:ss");
+  const [datePart, timePart] = dateStr.split('T');
+  const [year, month, day] = datePart.split('-').map(Number);
+  const [hour, minute, second] = timePart.split(':').map(Number);
+  return new Date(year, month - 1, day, hour, minute, second);
+};
+
 const Campaigns = () => {
   const [searchParams, setSearchParams] = useSearchParams();
   const [campaigns, setCampaigns] = useState<Campaign[]>([]);
@@ -1909,6 +1929,7 @@ const Campaigns = () => {
     winnerCriteria: 'OPEN_RATE' as 'OPEN_RATE' | 'CLICK_RATE',
     scheduledAt: '',
     timezone: 'UTC',
+    perUserTimezone: false,
   });
   const [aiTopic, setAiTopic] = useState('');
   const [aiSuggestions, setAiSuggestions] = useState<string[]>([]);
@@ -1935,6 +1956,7 @@ const Campaigns = () => {
   const [aiBrief, setAiBrief] = useState('');
   const [aiTone, setAiTone] = useState('Professional');
   const [isAiGenerating, setIsAiGenerating] = useState(false);
+  const [aiGeneratedResult, setAiGeneratedResult] = useState<{ subject: string, content: string } | null>(null);
   const [isSimulatingAB, setIsSimulatingAB] = useState(false);
 
   const handleAiGenerate = async () => {
@@ -1942,13 +1964,20 @@ const Campaigns = () => {
     setIsAiGenerating(true);
     try {
       const { subject, content } = await api.generateFullContent(aiBrief, aiTone);
-      setNewCampaign({ ...newCampaign, subject, content });
-      setIsAiAssistantOpen(false);
-      setAiBrief('');
+      setAiGeneratedResult({ subject, content });
     } catch (error) {
       console.error("AI Generation failed", error);
     } finally {
       setIsAiGenerating(false);
+    }
+  };
+
+  const applyAiContent = () => {
+    if (aiGeneratedResult) {
+      setNewCampaign({ ...newCampaign, subject: aiGeneratedResult.subject, content: aiGeneratedResult.content });
+      setIsAiAssistantOpen(false);
+      setAiBrief('');
+      setAiGeneratedResult(null);
     }
   };
 
@@ -2034,6 +2063,7 @@ const Campaigns = () => {
       winnerCriteria: 'OPEN_RATE',
       scheduledAt: '',
       timezone: 'UTC',
+      perUserTimezone: false,
     });
     api.getCampaigns().then(setCampaigns);
   };
@@ -2483,8 +2513,8 @@ const Campaigns = () => {
                         </div>
                         <div className="relative">
                           <DatePicker
-                            selected={newCampaign.scheduledAt ? new Date(newCampaign.scheduledAt) : null}
-                            onChange={(date) => setNewCampaign({...newCampaign, scheduledAt: date ? date.toISOString() : ''})}
+                            selected={newCampaign.scheduledAt ? getLocalDateForPicker(newCampaign.scheduledAt, newCampaign.timezone) : null}
+                            onChange={(date) => setNewCampaign({...newCampaign, scheduledAt: date ? getUtcDateString(date, newCampaign.timezone) : ''})}
                             showTimeSelect
                             dateFormat="MMMM d, yyyy h:mm aa"
                             className="w-full bg-transparent border-b border-border-hairline py-1 font-mono text-xs outline-none focus:border-burgundy cursor-pointer"
@@ -2502,7 +2532,7 @@ const Campaigns = () => {
                                 const date = new Date();
                                 date.setHours(predictedTime.hour, 0, 0, 0);
                                 if (date < new Date()) date.setDate(date.getDate() + 1);
-                                setNewCampaign({ ...newCampaign, scheduledAt: date.toISOString() });
+                                setNewCampaign({ ...newCampaign, scheduledAt: getUtcDateString(date, newCampaign.timezone) });
                               }}
                               className="mt-2 text-[9px] font-black uppercase tracking-widest text-burgundy hover:underline"
                             >
@@ -2543,6 +2573,8 @@ const Campaigns = () => {
                           type="checkbox" 
                           id="perUserTimezone"
                           className="accent-burgundy"
+                          checked={newCampaign.perUserTimezone}
+                          onChange={(e) => setNewCampaign({...newCampaign, perUserTimezone: e.target.checked})}
                         />
                         <label htmlFor="perUserTimezone" className="text-[10px] font-black uppercase tracking-widest text-ink/60 cursor-pointer">
                           Per-user timezone sending
@@ -3007,59 +3039,93 @@ const Campaigns = () => {
                   </div>
                   <h2 className="font-serif text-3xl font-bold">Generate Dispatch</h2>
                 </div>
-                <button onClick={() => setIsAiAssistantOpen(false)} className="text-ink/40 hover:text-burgundy">✕</button>
+                <button onClick={() => { setIsAiAssistantOpen(false); setAiGeneratedResult(null); }} className="text-ink/40 hover:text-burgundy">✕</button>
               </div>
 
-              <div className="space-y-6">
-                <div className="space-y-2">
-                  <label className="metric-label">Content Brief</label>
-                  <textarea 
-                    className="w-full bg-transparent border border-border-hairline p-4 font-serif text-lg outline-none focus:border-burgundy transition-colors min-h-[120px]"
-                    placeholder="What is this email about? (e.g. A weekly newsletter about sustainable fashion with 3 main articles...)"
-                    value={aiBrief}
-                    onChange={e => setAiBrief(e.target.value)}
-                  />
-                </div>
+              {!aiGeneratedResult ? (
+                <div className="space-y-6">
+                  <div className="space-y-2">
+                    <label className="metric-label">Content Brief</label>
+                    <textarea 
+                      className="w-full bg-transparent border border-border-hairline p-4 font-serif text-lg outline-none focus:border-burgundy transition-colors min-h-[120px]"
+                      placeholder="What is this email about? (e.g. A weekly newsletter about sustainable fashion with 3 main articles...)"
+                      value={aiBrief}
+                      onChange={e => setAiBrief(e.target.value)}
+                    />
+                  </div>
 
-                <div className="space-y-2">
-                  <label className="metric-label">Editorial Tone</label>
-                  <div className="grid grid-cols-3 gap-2">
-                    {['Professional', 'Casual', 'Urgent', 'Inspirational', 'Authoritative', 'Minimalist', 'Analytical', 'Empathetic', 'Sophisticated'].map(tone => (
-                      <button 
-                        key={tone}
-                        type="button"
-                        onClick={() => setAiTone(tone)}
-                        className={cn(
-                          "py-2 text-[10px] font-black uppercase tracking-widest border transition-all",
-                          aiTone === tone ? "bg-ink text-white border-ink" : "border-border-hairline text-ink/40 hover:border-burgundy hover:text-burgundy"
-                        )}
-                      >
-                        {tone}
-                      </button>
-                    ))}
+                  <div className="space-y-2">
+                    <label className="metric-label">Editorial Tone</label>
+                    <div className="grid grid-cols-3 gap-2">
+                      {['Professional', 'Casual', 'Urgent', 'Inspirational', 'Authoritative', 'Minimalist', 'Analytical', 'Empathetic', 'Sophisticated'].map(tone => (
+                        <button 
+                          key={tone}
+                          type="button"
+                          onClick={() => setAiTone(tone)}
+                          className={cn(
+                            "py-2 text-[10px] font-black uppercase tracking-widest border transition-all",
+                            aiTone === tone ? "bg-ink text-white border-ink" : "border-border-hairline text-ink/40 hover:border-burgundy hover:text-burgundy"
+                          )}
+                        >
+                          {tone}
+                        </button>
+                      ))}
+                    </div>
+                  </div>
+
+                  <div className="pt-4 flex gap-4">
+                    <button 
+                      onClick={handleAiGenerate} 
+                      disabled={isAiGenerating || !aiBrief}
+                      className="btn-primary flex-1 py-4 flex items-center justify-center gap-2 disabled:opacity-50"
+                    >
+                      {isAiGenerating ? (
+                        <>
+                          <div className="w-4 h-4 border-2 border-white/20 border-t-white rounded-full animate-spin" />
+                          Generating...
+                        </>
+                      ) : (
+                        <>
+                          <Wand2 size={16} />
+                          Generate Content
+                        </>
+                      )}
+                    </button>
                   </div>
                 </div>
-
-                <div className="pt-4 flex gap-4">
-                  <button 
-                    onClick={handleAiGenerate} 
-                    disabled={isAiGenerating || !aiBrief}
-                    className="btn-primary flex-1 py-4 flex items-center justify-center gap-2 disabled:opacity-50"
-                  >
-                    {isAiGenerating ? (
-                      <>
-                        <div className="w-4 h-4 border-2 border-white/20 border-t-white rounded-full animate-spin" />
-                        Generating...
-                      </>
-                    ) : (
-                      <>
-                        <Wand2 size={16} />
-                        Generate Content
-                      </>
-                    )}
-                  </button>
+              ) : (
+                <div className="space-y-6">
+                  <div className="space-y-2">
+                    <label className="metric-label">Generated Subject Line</label>
+                    <input 
+                      type="text"
+                      className="w-full bg-transparent border border-border-hairline p-3 font-sans font-bold text-sm outline-none focus:border-burgundy transition-colors"
+                      value={aiGeneratedResult.subject}
+                      onChange={e => setAiGeneratedResult({ ...aiGeneratedResult, subject: e.target.value })}
+                    />
+                  </div>
+                  <div className="space-y-2">
+                    <label className="metric-label">Generated Content</label>
+                    <div className="border border-border-hairline p-4 max-h-[40vh] overflow-y-auto custom-scrollbar font-serif text-sm">
+                      <div dangerouslySetInnerHTML={{ __html: aiGeneratedResult.content }} />
+                    </div>
+                  </div>
+                  <div className="pt-4 flex gap-4">
+                    <button 
+                      onClick={() => setAiGeneratedResult(null)} 
+                      className="px-6 py-3 border border-ink text-ink text-[10px] font-black uppercase tracking-widest hover:bg-ink/5 transition-colors"
+                    >
+                      Discard
+                    </button>
+                    <button 
+                      onClick={applyAiContent} 
+                      className="btn-primary flex-1 py-3 flex items-center justify-center gap-2"
+                    >
+                      <Check size={16} /> Apply to Broadcast
+                    </button>
+                  </div>
                 </div>
-              </div>
+              )}
             </motion.div>
           </div>
         )}
@@ -4630,6 +4696,18 @@ const Audiences = () => {
   const [availableLists, setAvailableLists] = useState<any[]>([]);
   const [selectedLists, setSelectedLists] = useState<string[]>([]);
 
+  const [isImportingCsv, setIsImportingCsv] = useState(false);
+  const [csvData, setCsvData] = useState<any[]>([]);
+  const [csvHeaders, setCsvHeaders] = useState<string[]>([]);
+  const [csvMapping, setCsvMapping] = useState<Record<string, string>>({
+    email: '',
+    firstName: '',
+    lastName: '',
+    tags: ''
+  });
+  const [isImporting, setIsImporting] = useState(false);
+  const [importResult, setImportResult] = useState<{ imported: number, failed: number } | null>(null);
+
   const { register, handleSubmit, formState: { errors }, reset, watch } = useForm<ContactFormData>({
     resolver: zodResolver(contactSchema),
     defaultValues: {
@@ -4789,6 +4867,57 @@ const Audiences = () => {
     }
   };
 
+  const handleFileUpload = (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0];
+    if (!file) return;
+
+    Papa.parse(file, {
+      header: true,
+      skipEmptyLines: true,
+      complete: (results) => {
+        setCsvHeaders(results.meta.fields || []);
+        setCsvData(results.data);
+        
+        // Auto-map common headers
+        const fields = results.meta.fields || [];
+        const newMapping = { email: '', firstName: '', lastName: '', tags: '' };
+        
+        fields.forEach(f => {
+          const lower = f.toLowerCase();
+          if (lower.includes('email')) newMapping.email = f;
+          else if (lower.includes('first') || lower === 'fname') newMapping.firstName = f;
+          else if (lower.includes('last') || lower === 'lname') newMapping.lastName = f;
+          else if (lower.includes('tag')) newMapping.tags = f;
+        });
+        
+        setCsvMapping(newMapping);
+      }
+    });
+  };
+
+  const handleImportCsv = async () => {
+    if (!csvMapping.email) return;
+    
+    setIsImporting(true);
+    const mappedContacts = csvData.map(row => ({
+      email: row[csvMapping.email],
+      firstName: csvMapping.firstName ? row[csvMapping.firstName] : '',
+      lastName: csvMapping.lastName ? row[csvMapping.lastName] : '',
+      tags: csvMapping.tags ? row[csvMapping.tags] : '',
+    })).filter(c => c.email);
+
+    try {
+      const result = await api.importContacts(mappedContacts);
+      setImportResult(result);
+      const updated = await api.getContacts();
+      setContacts(updated);
+    } catch (e) {
+      console.error("Import failed", e);
+    } finally {
+      setIsImporting(false);
+    }
+  };
+
   const onSubmit = async (data: ContactFormData) => {
     setIsValidating(true);
     // Simulate a deeper validation check
@@ -4822,6 +4951,9 @@ const Audiences = () => {
             >
               <Zap size={14} className={cn(isSimulatingEvent && "animate-pulse")} />
               {isSimulatingEvent ? "Simulating..." : "Simulate Event"}
+            </button>
+            <button onClick={() => setIsImportingCsv(true)} className="px-4 py-2 border border-ink text-ink text-[10px] font-black uppercase tracking-widest hover:bg-ink/5 transition-colors flex items-center gap-2">
+              <Upload size={14} /> Import CSV
             </button>
             <button onClick={() => setIsAdding(true)} className="btn-primary flex items-center gap-2">
               <Plus size={16} /> Add Contact
@@ -4922,6 +5054,141 @@ const Audiences = () => {
                   </button>
                 </div>
               </form>
+            </motion.div>
+          </div>
+        )}
+      </AnimatePresence>
+
+      <AnimatePresence>
+        {isImportingCsv && (
+          <div className="fixed inset-0 z-50 flex items-center justify-center p-10 bg-ink/40 backdrop-blur-sm">
+            <motion.div 
+              initial={{ opacity: 0, scale: 0.95 }}
+              animate={{ opacity: 1, scale: 1 }}
+              exit={{ opacity: 0, scale: 0.95 }}
+              className="bg-bg border border-ink w-full max-w-2xl p-8 shadow-2xl space-y-6 max-h-[90vh] overflow-y-auto custom-scrollbar"
+            >
+              <div className="flex justify-between items-center border-b border-border-hairline pb-4">
+                <h2 className="font-serif text-2xl font-bold">Import Contacts (CSV)</h2>
+                <button onClick={() => { setIsImportingCsv(false); setCsvData([]); setCsvHeaders([]); setImportResult(null); }} className="text-ink/40 hover:text-burgundy">✕</button>
+              </div>
+
+              {!importResult ? (
+                <div className="space-y-6">
+                  {csvData.length === 0 ? (
+                    <div className="border-2 border-dashed border-border-hairline p-12 flex flex-col items-center justify-center text-center space-y-4">
+                      <Upload size={32} className="text-ink/40" />
+                      <div>
+                        <p className="font-bold">Upload CSV File</p>
+                        <p className="text-xs text-ink/60 mt-1">Must include an email column.</p>
+                      </div>
+                      <input 
+                        type="file" 
+                        accept=".csv"
+                        onChange={handleFileUpload}
+                        className="text-xs file:mr-4 file:py-2 file:px-4 file:border-0 file:text-xs file:font-black file:uppercase file:tracking-widest file:bg-ink/5 file:text-ink hover:file:bg-ink/10 cursor-pointer"
+                      />
+                    </div>
+                  ) : (
+                    <div className="space-y-6">
+                      <div className="bg-surface p-4 border border-border-hairline flex justify-between items-center">
+                        <div>
+                          <p className="font-bold">File uploaded successfully</p>
+                          <p className="text-xs text-ink/60">{csvData.length} rows detected.</p>
+                        </div>
+                        <button onClick={() => { setCsvData([]); setCsvHeaders([]); }} className="text-xs font-bold text-burgundy hover:underline">
+                          Upload different file
+                        </button>
+                      </div>
+
+                      <div className="space-y-4">
+                        <h3 className="font-bold border-b border-border-hairline pb-2">Map Columns</h3>
+                        
+                        <div className="grid grid-cols-2 gap-4 items-center">
+                          <label className="text-sm font-bold">Email Address <span className="text-burgundy">*</span></label>
+                          <select 
+                            value={csvMapping.email} 
+                            onChange={e => setCsvMapping({...csvMapping, email: e.target.value})}
+                            className="bg-transparent border border-border-hairline p-2 text-sm outline-none focus:border-burgundy"
+                          >
+                            <option value="">-- Select Column --</option>
+                            {csvHeaders.map(h => <option key={h} value={h}>{h}</option>)}
+                          </select>
+
+                          <label className="text-sm font-bold">First Name</label>
+                          <select 
+                            value={csvMapping.firstName} 
+                            onChange={e => setCsvMapping({...csvMapping, firstName: e.target.value})}
+                            className="bg-transparent border border-border-hairline p-2 text-sm outline-none focus:border-burgundy"
+                          >
+                            <option value="">-- Select Column --</option>
+                            {csvHeaders.map(h => <option key={h} value={h}>{h}</option>)}
+                          </select>
+
+                          <label className="text-sm font-bold">Last Name</label>
+                          <select 
+                            value={csvMapping.lastName} 
+                            onChange={e => setCsvMapping({...csvMapping, lastName: e.target.value})}
+                            className="bg-transparent border border-border-hairline p-2 text-sm outline-none focus:border-burgundy"
+                          >
+                            <option value="">-- Select Column --</option>
+                            {csvHeaders.map(h => <option key={h} value={h}>{h}</option>)}
+                          </select>
+
+                          <label className="text-sm font-bold">Tags (comma separated)</label>
+                          <select 
+                            value={csvMapping.tags} 
+                            onChange={e => setCsvMapping({...csvMapping, tags: e.target.value})}
+                            className="bg-transparent border border-border-hairline p-2 text-sm outline-none focus:border-burgundy"
+                          >
+                            <option value="">-- Select Column --</option>
+                            {csvHeaders.map(h => <option key={h} value={h}>{h}</option>)}
+                          </select>
+                        </div>
+                      </div>
+
+                      <div className="pt-4 flex justify-end">
+                        <button 
+                          onClick={handleImportCsv}
+                          disabled={!csvMapping.email || isImporting}
+                          className="btn-primary flex items-center gap-2 disabled:opacity-50"
+                        >
+                          {isImporting ? (
+                            <>
+                              <div className="w-4 h-4 border-2 border-white/30 border-t-white rounded-full animate-spin" />
+                              Importing...
+                            </>
+                          ) : (
+                            "Import Contacts"
+                          )}
+                        </button>
+                      </div>
+                    </div>
+                  )}
+                </div>
+              ) : (
+                <div className="space-y-6 text-center py-8">
+                  <div className="w-16 h-16 bg-status-success/10 text-status-success rounded-full flex items-center justify-center mx-auto mb-4">
+                    <Check size={32} />
+                  </div>
+                  <h3 className="font-serif text-2xl font-bold">Import Complete</h3>
+                  <div className="flex justify-center gap-8 text-sm">
+                    <div className="text-center">
+                      <p className="text-3xl font-bold text-status-success">{importResult.imported}</p>
+                      <p className="text-ink/60 uppercase tracking-widest text-[10px] font-black mt-1">Imported</p>
+                    </div>
+                    <div className="text-center">
+                      <p className="text-3xl font-bold text-burgundy">{importResult.failed}</p>
+                      <p className="text-ink/60 uppercase tracking-widest text-[10px] font-black mt-1">Failed</p>
+                    </div>
+                  </div>
+                  <div className="pt-6">
+                    <button onClick={() => { setIsImportingCsv(false); setCsvData([]); setCsvHeaders([]); setImportResult(null); }} className="btn-primary">
+                      Done
+                    </button>
+                  </div>
+                </div>
+              )}
             </motion.div>
           </div>
         )}

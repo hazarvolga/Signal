@@ -309,6 +309,7 @@ model Campaign {
   type           String       @default("REGULAR") // REGULAR, AB, AUTOMATED, TRANSACTIONAL
   status         String       @default("DRAFT") // DRAFT, SCHEDULED, SENDING, SENT, ARCHIVED, IN_REVIEW
   timezone       String       @default("UTC")
+  perUserTimezone Boolean     @default(false)
   scheduledAt    DateTime?
   sentAt         DateTime?
   organizationId String

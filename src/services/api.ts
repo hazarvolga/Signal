@@ -25,6 +25,15 @@ export const api = {
     return res.json();
   },
 
+  async importContacts(contacts: any[]): Promise<{ imported: number, failed: number }> {
+    const res = await fetch('/api/contacts/bulk', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ contacts }),
+    });
+    return res.json();
+  },
+
   async getCampaigns(): Promise<Campaign[]> {
     const res = await fetch('/api/campaigns');
     return res.json();
