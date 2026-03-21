@@ -1746,7 +1746,7 @@ app.post("/api/ai/translate", async (req, res) => {
 });
 
 app.post("/api/ai/predict-send-time", async (req, res) => {
-  const { topic } = req.body;
+  const { topic, timezone } = req.body;
   
   // Fetch historical open events grouped by hour
   const openEvents = await prisma.event.findMany({
@@ -1756,11 +1756,11 @@ app.post("/api/ai/predict-send-time", async (req, res) => {
 
   const hourlyStats: Record<number, number> = {};
   openEvents.forEach(e => {
-    const hour = new Date(e.timestamp).getHours();
+    const hour = new Date(e.timestamp).getUTCHours();
     hourlyStats[hour] = (hourlyStats[hour] || 0) + 1;
   });
 
-  const prediction = await geminiService.predictBestSendTime(topic, hourlyStats);
+  const prediction = await geminiService.predictBestSendTime(topic, hourlyStats, timezone);
   res.json(prediction);
 });
 

@@ -263,11 +263,11 @@ export const api = {
     const data = await res.json();
     return data.content;
   },
-  async predictSendTime(topic: string): Promise<{ hour: number, reason: string }> {
+  async predictSendTime(topic: string, timezone: string): Promise<{ hour: number, reason: string }> {
     const res = await fetch('/api/ai/predict-send-time', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ topic })
+      body: JSON.stringify({ topic, timezone })
     });
     return res.json();
   },

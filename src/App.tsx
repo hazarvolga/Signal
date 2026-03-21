@@ -2140,9 +2140,10 @@ const Campaigns = () => {
   };
 
   const predictTime = async () => {
-    if (!newCampaign.name) return;
+    if (!newCampaign.name && !newCampaign.subject) return;
     setIsPredictingTime(true);
-    const prediction = await api.predictSendTime(newCampaign.name);
+    const topic = `${newCampaign.subject || newCampaign.name}\n\n${newCampaign.content?.substring(0, 500) || ''}`;
+    const prediction = await api.predictSendTime(topic, newCampaign.timezone);
     setPredictedTime(prediction);
     setIsPredictingTime(false);
   };
@@ -2573,8 +2574,12 @@ const Campaigns = () => {
                               onClick={() => {
                                 const date = new Date();
                                 date.setHours(predictedTime.hour, 0, 0, 0);
-                                if (date < new Date()) date.setDate(date.getDate() + 1);
-                                setNewCampaign({ ...newCampaign, scheduledAt: getUtcDateString(date, newCampaign.timezone) });
+                                let utcString = getUtcDateString(date, newCampaign.timezone);
+                                if (new Date(utcString) < new Date()) {
+                                  date.setDate(date.getDate() + 1);
+                                  utcString = getUtcDateString(date, newCampaign.timezone);
+                                }
+                                setNewCampaign({ ...newCampaign, scheduledAt: utcString });
                               }}
                               className="mt-2 text-[9px] font-black uppercase tracking-widest text-burgundy hover:underline"
                             >

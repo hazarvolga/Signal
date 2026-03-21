@@ -91,13 +91,14 @@ export const geminiService = {
     return response.text?.trim() || content;
   },
 
-  async predictBestSendTime(topic: string, engagementData?: any): Promise<{ hour: number, reason: string }> {
-    const dataContext = engagementData ? `Here is the historical engagement data (opens by hour): ${JSON.stringify(engagementData)}` : "No historical data available.";
+  async predictBestSendTime(topic: string, engagementData?: any, timezone?: string): Promise<{ hour: number, reason: string }> {
+    const dataContext = engagementData ? `Here is the historical engagement data (opens by hour in UTC): ${JSON.stringify(engagementData)}` : "No historical data available.";
+    const tzContext = timezone ? `The user's target timezone is ${timezone}.` : "The target timezone is UTC.";
     const response = await ai.models.generateContent({
       model: "gemini-3-flash-preview",
-      contents: `Based on the topic "${topic}" and the following context: ${dataContext}, 
-      what is the statistically best hour of the day (0-23) to send this email for maximum engagement?
-      If historical data is provided, prioritize it. If not, use general industry trends for this topic.
+      contents: `Based on the topic "${topic}" and the following context: ${dataContext}. ${tzContext}
+      What is the statistically best hour of the day (0-23) to send this email for maximum engagement in the target timezone?
+      If historical data is provided, prioritize it (remember it is in UTC, so convert it to the target timezone to find the best hour). If not, use general industry trends for this topic in the target timezone.
       Return as JSON with "hour" (number) and "reason" (string).`,
       config: {
         responseMimeType: "application/json",
