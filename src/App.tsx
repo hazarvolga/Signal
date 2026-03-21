@@ -2370,6 +2370,26 @@ const Campaigns = () => {
                             <ShieldCheck size={10} /> 
                             {isCheckingSpam ? 'Checking...' : 'Spam Check'}
                           </button>
+                          <button 
+                            type="button"
+                            onClick={() => setPreviewCampaign({
+                              id: 'preview',
+                              name: newCampaign.name || 'Preview',
+                              subject: newCampaign.subject,
+                              content: newCampaign.content,
+                              channel: newCampaign.channel,
+                              fromName: newCampaign.fromName,
+                              fromEmail: newCampaign.fromEmail,
+                              type: newCampaign.type,
+                              status: 'DRAFT',
+                              timezone: newCampaign.timezone,
+                              organizationId: 'preview',
+                              createdAt: new Date().toISOString()
+                            })}
+                            className="text-[10px] font-black uppercase tracking-widest text-ink/40 hover:text-burgundy flex items-center gap-1"
+                          >
+                            <Eye size={10} /> Preview
+                          </button>
                         </div>
                       </div>
                       
@@ -2423,13 +2443,35 @@ const Campaigns = () => {
                           value={newCampaign.contentB}
                           onChange={val => setNewCampaign({...newCampaign, contentB: val})}
                         />
-                        <button 
-                          type="button"
-                          onClick={() => setNewCampaign({...newCampaign, contentB: newCampaign.content})}
-                          className="text-[10px] font-black uppercase tracking-widest text-ink/40 hover:text-burgundy"
-                        >
-                          Copy from Variation A
-                        </button>
+                        <div className="flex justify-between items-center">
+                          <button 
+                            type="button"
+                            onClick={() => setNewCampaign({...newCampaign, contentB: newCampaign.content})}
+                            className="text-[10px] font-black uppercase tracking-widest text-ink/40 hover:text-burgundy"
+                          >
+                            Copy from Variation A
+                          </button>
+                          <button 
+                            type="button"
+                            onClick={() => setPreviewCampaign({
+                              id: 'preview-b',
+                              name: (newCampaign.name || 'Preview') + ' (Variation B)',
+                              subject: newCampaign.subjectB || '',
+                              content: newCampaign.contentB || '',
+                              channel: newCampaign.channel,
+                              fromName: newCampaign.fromName,
+                              fromEmail: newCampaign.fromEmail,
+                              type: newCampaign.type,
+                              status: 'DRAFT',
+                              timezone: newCampaign.timezone,
+                              organizationId: 'preview',
+                              createdAt: new Date().toISOString()
+                            })}
+                            className="text-[10px] font-black uppercase tracking-widest text-ink/40 hover:text-burgundy flex items-center gap-1"
+                          >
+                            <Eye size={10} /> Preview B
+                          </button>
+                        </div>
                       </div>
                     </motion.div>
                   )}
