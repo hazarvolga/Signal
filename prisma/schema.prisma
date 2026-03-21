@@ -229,6 +229,7 @@ model Contact {
   updatedAt      DateTime     @updatedAt
 
   tags           Tag[]
+  segments       Segment[]
   listMemberships ListMembership[]
   events         Event[]
   behavioralEvents BehavioralEvent[]
@@ -289,6 +290,8 @@ model Segment {
   organization   Organization @relation(fields: [organizationId], references: [id])
   createdAt      DateTime     @default(now())
   updatedAt      DateTime     @updatedAt
+  contactCount   Int          @default(0)
+  contacts       Contact[]
 }
 
 model Campaign {

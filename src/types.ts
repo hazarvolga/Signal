@@ -155,6 +155,7 @@ export interface Segment {
   rules: string; // JSON string
   organizationId: string;
   createdAt: string;
+  contactCount: number;
 }
 
 export interface CustomFieldDefinition {

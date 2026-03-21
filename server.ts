@@ -1269,6 +1269,54 @@ async function startServer() {
     res.json(segments);
   });
 
+  async function refreshSegment(segmentId: string) {
+    const segment = await prisma.segment.findUnique({ where: { id: segmentId } });
+    if (!segment) return;
+
+    try {
+      const rules = JSON.parse(segment.rules);
+      const where: any = { organizationId: segment.organizationId };
+
+      for (const rule of rules) {
+        if (rule.type === 'event') {
+          const timeframeMs = parseTimeframe(rule.timeframe);
+          where.behavioralEvents = {
+            some: {
+              name: rule.eventName,
+              timestamp: {
+                gte: new Date(Date.now() - timeframeMs)
+              }
+            }
+          };
+        } else if (rule.type === 'attribute') {
+          if (rule.field === 'status') {
+            where.status = rule.value;
+          }
+        }
+      }
+
+      // Fetch only IDs to be efficient
+      const matchedContacts = await prisma.contact.findMany({
+        where,
+        select: { id: true }
+      });
+
+      await prisma.segment.update({
+        where: { id: segment.id },
+        data: {
+          contactCount: matchedContacts.length,
+          contacts: {
+            set: matchedContacts.map(c => ({ id: c.id }))
+          }
+        }
+      });
+      
+      console.log(`Segment ${segment.id} refreshed: ${matchedContacts.length} contacts.`);
+    } catch (err) {
+      console.error(`Error refreshing segment ${segment.id}:`, err);
+    }
+  }
+
   app.post("/api/segments", async (req, res) => {
     const org = await prisma.organization.findFirst();
     const { name, rules } = req.body;
@@ -1279,73 +1327,36 @@ async function startServer() {
         organizationId: org!.id,
       },
     });
-    res.json(segment);
+    
+    // Initial refresh
+    await refreshSegment(segment.id);
+    
+    const updatedSegment = await prisma.segment.findUnique({ where: { id: segment.id } });
+    res.json(updatedSegment);
   });
 
   app.get("/api/segments/:id/contacts", async (req, res) => {
     const segment = await prisma.segment.findUnique({
       where: { id: req.params.id },
+      include: {
+        contacts: {
+          include: { tags: true }
+        }
+      }
     });
     if (!segment) return res.status(404).json({ error: "Segment not found" });
 
-    const rules = JSON.parse(segment.rules);
-    const where: any = { organizationId: segment.organizationId };
-
-    for (const rule of rules) {
-      if (rule.type === 'event') {
-        const timeframeMs = parseTimeframe(rule.timeframe);
-        where.behavioralEvents = {
-          some: {
-            name: rule.eventName,
-            timestamp: {
-              gte: new Date(Date.now() - timeframeMs)
-            }
-          }
-        };
-      } else if (rule.type === 'attribute') {
-        if (rule.field === 'status') {
-          where.status = rule.value;
-        }
-        // Add more attribute filters as needed
-      }
-    }
-
-    const contacts = await prisma.contact.findMany({
-      where,
-      include: { tags: true },
-    });
-    res.json(contacts);
+    res.json(segment.contacts);
   });
 
   app.get("/api/segments/:id/count", async (req, res) => {
     const segment = await prisma.segment.findUnique({
       where: { id: req.params.id },
+      select: { contactCount: true }
     });
     if (!segment) return res.status(404).json({ error: "Segment not found" });
 
-    const rules = JSON.parse(segment.rules);
-    const where: any = { organizationId: segment.organizationId };
-
-    for (const rule of rules) {
-      if (rule.type === 'event') {
-        const timeframeMs = parseTimeframe(rule.timeframe);
-        where.behavioralEvents = {
-          some: {
-            name: rule.eventName,
-            timestamp: {
-              gte: new Date(Date.now() - timeframeMs)
-            }
-          }
-        };
-      } else if (rule.type === 'attribute') {
-        if (rule.field === 'status') {
-          where.status = rule.value;
-        }
-      }
-    }
-
-    const count = await prisma.contact.count({ where });
-    res.json({ count });
+    res.json({ count: segment.contactCount });
   });
 
   app.delete("/api/segments/:id", async (req, res) => {
@@ -2772,6 +2783,21 @@ cron.schedule('* * * * *', async () => {
     }
   } catch (error) {
     console.error("Error processing scheduled campaigns:", error);
+  }
+});
+
+// Schedule segment refresh cron job (runs every 5 minutes)
+cron.schedule('*/5 * * * *', async () => {
+  try {
+    console.log("Starting background segment refresh...");
+    const segments = await prisma.segment.findMany({ select: { id: true } });
+    
+    for (const segment of segments) {
+      await refreshSegment(segment.id);
+    }
+    console.log("Background segment refresh completed.");
+  } catch (error) {
+    console.error("Error in segment refresh cron job:", error);
   }
 });
 

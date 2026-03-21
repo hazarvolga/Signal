@@ -4768,8 +4768,7 @@ const Audiences = () => {
       setSegments(segs);
       const counts: Record<string, number> = {};
       for (const seg of segs) {
-        const { count } = await api.getSegmentCount(seg.id);
-        counts[seg.id] = count;
+        counts[seg.id] = seg.contactCount;
       }
       setSegmentCounts(counts);
     });
@@ -4799,8 +4798,7 @@ const Audiences = () => {
     
     const counts: Record<string, number> = {};
     for (const seg of updatedSegments) {
-      const { count } = await api.getSegmentCount(seg.id);
-      counts[seg.id] = count;
+      counts[seg.id] = seg.contactCount;
     }
     setSegmentCounts(counts);
     
