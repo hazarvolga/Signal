@@ -51,6 +51,7 @@ import {
   Loader2,
   Sun,
   Moon,
+  MousePointerClick,
   Menu,
   MessageSquare,
   X,
@@ -118,6 +119,7 @@ import ReactFlow, {
 
 import { useAuth, Permission } from './hooks/useAuth';
 import { EmailValidation } from './components/EmailValidation';
+import { ContentRenderer } from './components/ContentRenderer';
 import { useCollaboration } from './services/collaborationContext';
 import { HelpTooltip } from './components/HelpTooltip';
 import { UserGuideModal } from './components/UserGuide';
@@ -2330,6 +2332,43 @@ const Campaigns = () => {
                         <div className="flex gap-4">
                           <div className="relative group">
                             <button type="button" className="text-[10px] font-black uppercase tracking-widest text-ink/40 hover:text-burgundy flex items-center gap-1">
+                              <MousePointerClick size={10} /> Interactive (AMP)
+                            </button>
+                            <div className="absolute right-0 top-full mt-2 bg-bg border border-ink p-2 hidden group-hover:block z-10 shadow-xl min-w-[160px]">
+                              <button 
+                                type="button"
+                                onClick={() => {
+                                  const placeholder = `\n\n[[AMP_SURVEY:How would you rate this newsletter?|1,2,3,4,5]]\n\n`;
+                                  setNewCampaign({...newCampaign, content: newCampaign.content + placeholder});
+                                }}
+                                className="block w-full text-left px-2 py-2 text-[10px] font-black uppercase tracking-widest hover:bg-surface border-b border-border-hairline"
+                              >
+                                + Add Survey Form
+                              </button>
+                              <button 
+                                type="button"
+                                onClick={() => {
+                                  const placeholder = `\n\n[[AMP_SURVEY:Will you attend our next event?|Yes,No,Maybe]]\n\n`;
+                                  setNewCampaign({...newCampaign, content: newCampaign.content + placeholder});
+                                }}
+                                className="block w-full text-left px-2 py-2 text-[10px] font-black uppercase tracking-widest hover:bg-surface border-b border-border-hairline"
+                              >
+                                + Add RSVP Form
+                              </button>
+                              <button 
+                                type="button"
+                                onClick={() => {
+                                  const placeholder = `\n\n[[AMP_PRODUCT:Premium Newsletter Subscription|$9.99|Subscribe Now]]\n\n`;
+                                  setNewCampaign({...newCampaign, content: newCampaign.content + placeholder});
+                                }}
+                                className="block w-full text-left px-2 py-2 text-[10px] font-black uppercase tracking-widest hover:bg-surface"
+                              >
+                                + Add Product Purchase
+                              </button>
+                            </div>
+                          </div>
+                          <div className="relative group">
+                            <button type="button" className="text-[10px] font-black uppercase tracking-widest text-ink/40 hover:text-burgundy flex items-center gap-1">
                               <Wand2 size={10} /> Tone
                             </button>
                             <div className="absolute right-0 top-full mt-2 bg-bg border border-ink p-2 hidden group-hover:block z-10 shadow-xl min-w-[120px]">
@@ -2950,7 +2989,7 @@ const Campaigns = () => {
               </div>
               <div className="flex-1 overflow-y-auto p-10 bg-white">
                 <div className="max-w-2xl mx-auto">
-                  <div className="prose prose-sm font-serif" dangerouslySetInnerHTML={{ __html: personalizedContent }} />
+                  <ContentRenderer content={personalizedContent} campaignId={previewCampaign?.id || 'preview'} contactId={previewContact?.id || 'preview'} className="prose prose-sm font-serif" />
                 </div>
               </div>
               <div className="p-4 border-t border-border-hairline bg-surface text-center">
@@ -3438,7 +3477,7 @@ const CampaignDetail = () => {
             <div className="space-y-6">
               <h3 className="font-sans font-black uppercase tracking-widest text-xs border-b border-ink pb-2">Content Preview</h3>
               <div className="bg-white border border-border-hairline p-10 shadow-sm max-w-2xl mx-auto">
-                <div className="prose prose-sm font-serif" dangerouslySetInnerHTML={{ __html: campaign.content }} />
+                <ContentRenderer content={campaign.content} campaignId={campaign.id} contactId="preview-contact-id" />
               </div>
             </div>
           </div>
@@ -3520,7 +3559,9 @@ const CampaignDetail = () => {
             <div className="space-y-8">
               <h3 className="font-sans font-black uppercase tracking-widest text-xs border-b border-ink pb-2">Reader Drop-off Heatmap</h3>
               <div className="relative border border-border-hairline bg-white p-12 overflow-hidden">
-                <div className="prose prose-sm font-serif opacity-20 select-none pointer-events-none" dangerouslySetInnerHTML={{ __html: campaign.content }} />
+                <div className="opacity-20 select-none pointer-events-none">
+                  <ContentRenderer content={campaign.content} campaignId={campaign.id} contactId="preview-contact-id" />
+                </div>
                 
                 {/* Heatmap Overlay */}
                 <div className="absolute inset-0 pointer-events-none flex flex-col">
@@ -8561,7 +8602,9 @@ const DispatchView = () => {
           <h1 className="text-5xl font-serif font-bold text-ink mb-4">{campaign.name}</h1>
           <p className="text-xl font-editorial italic text-ink/60">{campaign.subject}</p>
         </div>
-        <div className="prose prose-lg font-serif mx-auto" dangerouslySetInnerHTML={{ __html: campaign.content }} />
+        <div className="mx-auto">
+          <ContentRenderer content={campaign.content} campaignId={campaign.id} contactId={contact?.id || "preview-contact-id"} className="prose prose-lg font-serif mx-auto" />
+        </div>
         <div className="mt-20 pt-12 border-t border-border-hairline text-center">
           <p className="text-[10px] font-mono text-ink/40 uppercase tracking-widest">End of Dispatch • Sent via SIGNAL</p>
         </div>

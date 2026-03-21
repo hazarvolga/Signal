@@ -1640,6 +1640,34 @@ async function startServer() {
     res.json(event);
   });
 
+  // AMP for Email Form Submission Endpoint
+  app.post("/api/amp/submit", async (req, res) => {
+    const { campaignId, contactId, type, ...data } = req.body;
+    
+    // AMP CORS Requirements
+    const origin = req.headers.origin || req.query.__amp_source_origin as string;
+    res.setHeader('Access-Control-Allow-Origin', origin || '*');
+    res.setHeader('AMP-Access-Control-Allow-Source-Origin', origin || '*');
+    res.setHeader('Access-Control-Expose-Headers', 'AMP-Access-Control-Allow-Source-Origin');
+
+    if (!campaignId || !contactId || !type) {
+      return res.status(400).json({ message: "Missing required fields" });
+    }
+
+    try {
+      await createEventAndBroadcast({
+        type: 'AMP_INTERACTION',
+        name: type,
+        campaignId,
+        contactId,
+        metadata: JSON.stringify(data)
+      });
+      res.json({ message: "Success", data });
+    } catch (error) {
+      res.status(500).json({ message: "Error saving response" });
+    }
+  });
+
   // Advanced Analytics
   app.get("/api/analytics/deliverability", async (req, res) => {
     res.json({
