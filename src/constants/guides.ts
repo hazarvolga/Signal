@@ -30,6 +30,11 @@ export const ADMIN_GUIDE = {
       id: "forms_pages",
       title: "Forms & Landing Pages",
       content: "Create embeddable pop-ups and hosted 'link-in-bio' style landing pages to capture leads directly into your SIGNAL audience, eliminating the need for third-party tools."
+    },
+    {
+      id: "email_validation",
+      title: "10-Layer Email Validation",
+      content: "Maintain list hygiene with our enterprise-grade 10-layer validation system. It checks syntax, DNS/MX records, detects disposable/role-based addresses, performs SMTP handshakes, identifies catch-all domains, assigns reputation scores, suggests typo corrections, and supports internationalized (Unicode) emails. This runs in real-time during imports and form submissions."
     }
   ]
 };
@@ -72,7 +77,7 @@ export const TOOLTIP_CONTENT: Record<string, string> = {
   "integrations-api": "Connect SIGNAL to your existing tools via webhooks and API integrations.",
   "reports-analytics": "Deep dive into campaign performance, reader behavior, and growth metrics.",
   "templates-library": "Manage reusable editorial layouts to ensure brand consistency across all dispatches.",
-  "validation-deliverability": "Verify email addresses and ensure your dispatches reach the inbox.",
+  "validation-deliverability": "Verify email addresses using our 10-layer validation engine (Syntax, DNS, SMTP, Disposable, Typo Correction, etc.) to ensure your dispatches reach the inbox.",
   "data-layer": "Advanced data mapping and event tracking for enterprise-scale personalization.",
   "growth-overview": "Monitor the performance of your newsletter referral program. See how many new subscribers are joining via referrals.",
   "growth-rewards": "Define the milestones and rewards for your referral program (e.g., 'Refer 3 friends to get an eBook').",
