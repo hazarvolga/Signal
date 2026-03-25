@@ -123,7 +123,9 @@ import { ContentRenderer } from './components/ContentRenderer';
 import { useCollaboration } from './services/collaborationContext';
 import { HelpTooltip } from './components/HelpTooltip';
 import { UserGuideModal } from './components/UserGuide';
-import { BookOpen } from 'lucide-react';
+import { AiSegmentationModal } from './components/AiSegmentationModal';
+import { GrowthEngine } from './components/GrowthEngine';
+import { BookOpen, BrainCircuit, TrendingUp, Gift, Copy } from 'lucide-react';
 
 // --- Utils ---
 function cn(...inputs: ClassValue[]) {
@@ -2330,6 +2332,33 @@ const Campaigns = () => {
                       <div className="flex justify-between items-center">
                         <label className="metric-label">Editorial Content</label>
                         <div className="flex gap-4">
+                          <div className="relative group">
+                            <button type="button" className="text-[10px] font-black uppercase tracking-widest text-ink/40 hover:text-burgundy flex items-center gap-1">
+                              <Split size={10} /> Dynamic & Growth
+                            </button>
+                            <div className="absolute right-0 top-full mt-2 bg-bg border border-ink p-2 hidden group-hover:block z-10 shadow-xl min-w-[180px]">
+                              <button 
+                                type="button"
+                                onClick={() => {
+                                  const placeholder = `\n\n[[DYNAMIC:city=Istanbul|Come to our exclusive Istanbul event this Friday!]]\n\n`;
+                                  setNewCampaign({...newCampaign, content: newCampaign.content + placeholder});
+                                }}
+                                className="block w-full text-left px-2 py-2 text-[10px] font-black uppercase tracking-widest hover:bg-surface border-b border-border-hairline"
+                              >
+                                + Add Dynamic Block
+                              </button>
+                              <button 
+                                type="button"
+                                onClick={() => {
+                                  const placeholder = `\n\n[[REFERRAL_WIDGET]]\n\n`;
+                                  setNewCampaign({...newCampaign, content: newCampaign.content + placeholder});
+                                }}
+                                className="block w-full text-left px-2 py-2 text-[10px] font-black uppercase tracking-widest hover:bg-surface"
+                              >
+                                + Add Referral Widget
+                              </button>
+                            </div>
+                          </div>
                           <div className="relative group">
                             <button type="button" className="text-[10px] font-black uppercase tracking-widest text-ink/40 hover:text-burgundy flex items-center gap-1">
                               <MousePointerClick size={10} /> Interactive (AMP)
@@ -4783,6 +4812,7 @@ const Audiences = () => {
   const [churnSummary, setChurnSummary] = useState<{ high: number, medium: number, low: number, topAtRisk: any[] } | null>(null);
   const [availableLists, setAvailableLists] = useState<any[]>([]);
   const [selectedLists, setSelectedLists] = useState<string[]>([]);
+  const [isAiSegmentationOpen, setIsAiSegmentationOpen] = useState(false);
 
   const [isImportingCsv, setIsImportingCsv] = useState(false);
   const [csvData, setCsvData] = useState<any[]>([]);
@@ -5038,6 +5068,9 @@ const Audiences = () => {
               <Zap size={14} className={cn(isSimulatingEvent && "animate-pulse")} />
               {isSimulatingEvent ? "Simulating..." : "Simulate Event"}
             </button>
+            <button onClick={() => setIsAiSegmentationOpen(true)} className="px-4 py-2 border border-burgundy text-burgundy text-[10px] font-black uppercase tracking-widest hover:bg-burgundy/5 transition-colors flex items-center gap-2">
+              <BrainCircuit size={14} /> AI Segments
+            </button>
             <button onClick={() => setIsImportingCsv(true)} className="px-4 py-2 border border-ink text-ink text-[10px] font-black uppercase tracking-widest hover:bg-ink/5 transition-colors flex items-center gap-2">
               <Upload size={14} /> Import CSV
             </button>
@@ -5144,6 +5177,15 @@ const Audiences = () => {
           </div>
         )}
       </AnimatePresence>
+
+      <AiSegmentationModal 
+        isOpen={isAiSegmentationOpen} 
+        onClose={() => setIsAiSegmentationOpen(false)} 
+        contacts={contacts} 
+        onApply={(segmentedContacts) => {
+          setContacts(segmentedContacts);
+        }} 
+      />
 
       <AnimatePresence>
         {isImportingCsv && (
@@ -8645,6 +8687,7 @@ const CommandPalette = () => {
     { name: 'Dashboard', path: '/', icon: <LayoutDashboard size={16} /> },
     { name: 'Broadcasts', path: '/campaigns', icon: <Send size={16} /> },
     { name: 'Audience', path: '/audiences', icon: <Users size={16} /> },
+    { name: 'Growth Engine', path: '/growth', icon: <TrendingUp size={16} /> },
     { name: 'Automations', path: '/automations', icon: <Zap size={16} /> },
     { name: 'Visual Studio', path: '/visual-studio', icon: <Sparkles size={16} /> },
     { name: 'Reports', path: '/reports', icon: <BarChart3 size={16} /> },
@@ -8816,6 +8859,7 @@ export default function App() {
               <Route path="/campaigns" element={<ProtectedRoute><Campaigns /></ProtectedRoute>} />
               <Route path="/campaigns/:id" element={<ProtectedRoute><CampaignDetail /></ProtectedRoute>} />
               <Route path="/audiences" element={<ProtectedRoute permission="contact:edit"><Audiences /></ProtectedRoute>} />
+              <Route path="/growth" element={<ProtectedRoute><GrowthEngine /></ProtectedRoute>} />
               <Route path="/automations" element={<ProtectedRoute permission="automation:edit"><Automations /></ProtectedRoute>} />
               <Route path="/media" element={<ProtectedRoute><MediaLibrary /></ProtectedRoute>} />
               <Route path="/commerce" element={<ProtectedRoute><Commerce /></ProtectedRoute>} />
