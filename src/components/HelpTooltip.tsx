@@ -1,7 +1,8 @@
-import React, { useState } from 'react';
+import React, { useState, useEffect } from 'react';
 import { HelpCircle, X } from 'lucide-react';
 import { motion, AnimatePresence } from 'motion/react';
 import { TOOLTIP_CONTENT } from '../constants/guides';
+import { useTour } from '../contexts/TourContext';
 
 interface HelpTooltipProps {
   guideKey: string;
@@ -10,7 +11,15 @@ interface HelpTooltipProps {
 
 export const HelpTooltip: React.FC<HelpTooltipProps> = ({ guideKey, className }) => {
   const [isOpen, setIsOpen] = useState(false);
+  const { isTourActive } = useTour();
   const content = TOOLTIP_CONTENT[guideKey] || "No help content available for this section.";
+
+  // Auto-open or pulse when tour is active
+  useEffect(() => {
+    if (!isTourActive) {
+      setIsOpen(false);
+    }
+  }, [isTourActive]);
 
   return (
     <div className={`relative inline-block ${className}`}>
@@ -20,10 +29,10 @@ export const HelpTooltip: React.FC<HelpTooltipProps> = ({ guideKey, className })
           e.stopPropagation();
           setIsOpen(!isOpen);
         }}
-        className="text-burgundy/40 hover:text-burgundy transition-colors p-1"
+        className={`transition-colors p-1 rounded-full ${isTourActive ? 'text-white bg-burgundy animate-pulse shadow-[0_0_10px_rgba(255,0,0,0.5)]' : 'text-burgundy/40 hover:text-burgundy'}`}
         title="Click for help"
       >
-        <HelpCircle size={14} />
+        <HelpCircle size={isTourActive ? 16 : 14} />
       </button>
 
       <AnimatePresence>

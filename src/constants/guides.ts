@@ -20,6 +20,16 @@ export const ADMIN_GUIDE = {
       id: "governance",
       title: "Governance",
       content: "Set up approval workflows to ensure all campaigns and templates meet editorial standards before being dispatched. You can track all team activity in the live feed."
+    },
+    {
+      id: "growth",
+      title: "Growth Engine",
+      content: "Configure the built-in referral program to turn your subscribers into your biggest growth channel. Set up reward tiers and track top referrers."
+    },
+    {
+      id: "forms_pages",
+      title: "Forms & Landing Pages",
+      content: "Create embeddable pop-ups and hosted 'link-in-bio' style landing pages to capture leads directly into your SIGNAL audience, eliminating the need for third-party tools."
     }
   ]
 };
@@ -30,7 +40,7 @@ export const EDITOR_GUIDE = {
     {
       id: "campaigns",
       title: "Creating Campaigns",
-      content: "Use the Campaigns section to draft new dispatches. You can use the Visual Studio to design assets and Gemini AI to assist with copywriting and subject line optimization."
+      content: "Use the Campaigns section to draft new dispatches. You can use the Visual Studio to design assets and Gemini AI to assist with copywriting and subject line optimization. Use the 'Dynamic & Growth' tools to insert personalized content blocks and referral widgets."
     },
     {
       id: "templates",
@@ -63,5 +73,11 @@ export const TOOLTIP_CONTENT: Record<string, string> = {
   "reports-analytics": "Deep dive into campaign performance, reader behavior, and growth metrics.",
   "templates-library": "Manage reusable editorial layouts to ensure brand consistency across all dispatches.",
   "validation-deliverability": "Verify email addresses and ensure your dispatches reach the inbox.",
-  "data-layer": "Advanced data mapping and event tracking for enterprise-scale personalization."
+  "data-layer": "Advanced data mapping and event tracking for enterprise-scale personalization.",
+  "growth-overview": "Monitor the performance of your newsletter referral program. See how many new subscribers are joining via referrals.",
+  "growth-rewards": "Define the milestones and rewards for your referral program (e.g., 'Refer 3 friends to get an eBook').",
+  "growth-leaderboard": "See your top referring subscribers. These are your most valuable brand advocates.",
+  "forms_overview": "Create standalone landing pages or embeddable pop-up forms to collect email addresses and grow your list.",
+  "dynamic_content": "Insert content blocks that change based on subscriber data (e.g., show different text to users in different cities).",
+  "referral_widget": "Insert a personalized block showing the subscriber their unique referral link and progress towards rewards."
 };

@@ -125,12 +125,12 @@ import { HelpTooltip } from './components/HelpTooltip';
 import { UserGuideModal } from './components/UserGuide';
 import { AiSegmentationModal } from './components/AiSegmentationModal';
 import { GrowthEngine } from './components/GrowthEngine';
-import { BookOpen, BrainCircuit, TrendingUp, Gift, Copy } from 'lucide-react';
+import FormsPages from './components/FormsPages';
+import { BookOpen, BrainCircuit, TrendingUp, Gift, Copy, HelpCircle } from 'lucide-react';
+import { useTour } from './contexts/TourContext';
+import { cn } from './lib/utils';
 
 // --- Utils ---
-function cn(...inputs: ClassValue[]) {
-  return twMerge(clsx(inputs));
-}
 
 const ProtectedRoute = ({ 
   children, 
@@ -154,10 +154,13 @@ const Masthead = ({ onOpenGuide, theme, toggleTheme }: { onOpenGuide: () => void
   const { user } = useAuth();
   const location = useLocation();
   const [isMobileMenuOpen, setIsMobileMenuOpen] = useState(false);
+  const { isTourActive, toggleTour } = useTour();
 
   const navLinks = [
     { to: "/campaigns", label: "Campaigns" },
     { to: "/audiences", label: "Audiences" },
+    { to: "/growth", label: "Growth Engine" },
+    { to: "/forms", label: "Forms & Pages" },
     { to: "/automations", label: "Automations" },
     { to: "/media", label: "Media" },
     { to: "/commerce", label: "Commerce" },
@@ -215,6 +218,20 @@ const Masthead = ({ onOpenGuide, theme, toggleTheme }: { onOpenGuide: () => void
           >
             <BookOpen size={14} />
             <span>Guide</span>
+          </button>
+
+          <button 
+            onClick={toggleTour}
+            className={cn(
+              "hidden sm:flex items-center gap-2 text-[10px] font-black uppercase tracking-widest px-3 py-2 rounded transition-all border",
+              isTourActive 
+                ? "bg-burgundy text-white border-burgundy animate-pulse shadow-[0_0_10px_rgba(255,0,0,0.5)]" 
+                : "text-burgundy hover:bg-burgundy/5 border-burgundy/20"
+            )}
+            title={isTourActive ? "Stop Interactive Tour" : "Start Interactive Tour"}
+          >
+            <HelpCircle size={14} />
+            <span>{isTourActive ? "Stop Tour" : "Start Tour"}</span>
           </button>
           
           <div className="hidden 2xl:flex items-center gap-2 px-3 py-1.5 bg-surface border border-border-hairline rounded text-[10px] font-mono text-ink/40">
@@ -1658,7 +1675,7 @@ const PreferenceCenter = () => {
   );
 };
 
-const Home = () => {
+const Home = ({ onOpenGuide }: { onOpenGuide: () => void }) => {
   const { user, refreshUser } = useAuth();
   const { joinRoom, leaveRoom } = useCollaboration();
   const [stats, setStats] = useState<DashboardStats | null>(null);
@@ -1890,6 +1907,22 @@ const Home = () => {
             <p className="text-xs text-ink/60 leading-relaxed italic">
               "Your signal is clear. Maintain high engagement by segmenting your audience based on recent activity."
             </p>
+          </div>
+
+          <div className="bg-white border border-border-hairline p-8 space-y-6">
+            <h3 className="font-serif text-2xl font-bold flex items-center gap-2">
+              <BookOpen size={24} className="text-burgundy" />
+              Documentation
+            </h3>
+            <p className="text-sm text-ink/70 font-editorial italic">
+              Learn how to use all features of SIGNAL, from creating campaigns to setting up the growth engine.
+            </p>
+            <button 
+              onClick={onOpenGuide}
+              className="w-full py-3 border border-burgundy text-burgundy text-xs font-black uppercase tracking-widest hover:bg-burgundy hover:text-white transition-all flex items-center justify-center gap-2"
+            >
+              Open User Guide
+            </button>
           </div>
         </div>
       </div>
@@ -8688,6 +8721,7 @@ const CommandPalette = () => {
     { name: 'Broadcasts', path: '/campaigns', icon: <Send size={16} /> },
     { name: 'Audience', path: '/audiences', icon: <Users size={16} /> },
     { name: 'Growth Engine', path: '/growth', icon: <TrendingUp size={16} /> },
+    { name: 'Forms & Pages', path: '/forms', icon: <LayoutTemplate size={16} /> },
     { name: 'Automations', path: '/automations', icon: <Zap size={16} /> },
     { name: 'Visual Studio', path: '/visual-studio', icon: <Sparkles size={16} /> },
     { name: 'Reports', path: '/reports', icon: <BarChart3 size={16} /> },
@@ -8855,11 +8889,12 @@ export default function App() {
             transition={{ duration: 0.4, ease: [0.22, 1, 0.36, 1] }}
           >
             <Routes>
-              <Route path="/" element={<Home />} />
+              <Route path="/" element={<Home onOpenGuide={() => setIsGuideOpen(true)} />} />
               <Route path="/campaigns" element={<ProtectedRoute><Campaigns /></ProtectedRoute>} />
               <Route path="/campaigns/:id" element={<ProtectedRoute><CampaignDetail /></ProtectedRoute>} />
               <Route path="/audiences" element={<ProtectedRoute permission="contact:edit"><Audiences /></ProtectedRoute>} />
               <Route path="/growth" element={<ProtectedRoute><GrowthEngine /></ProtectedRoute>} />
+              <Route path="/forms" element={<ProtectedRoute><FormsPages /></ProtectedRoute>} />
               <Route path="/automations" element={<ProtectedRoute permission="automation:edit"><Automations /></ProtectedRoute>} />
               <Route path="/media" element={<ProtectedRoute><MediaLibrary /></ProtectedRoute>} />
               <Route path="/commerce" element={<ProtectedRoute><Commerce /></ProtectedRoute>} />

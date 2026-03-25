@@ -1,5 +1,6 @@
 import React, { useState } from 'react';
 import { Gift, Copy, Trophy, Users, ArrowUpRight, TrendingUp } from 'lucide-react';
+import { HelpTooltip } from './HelpTooltip';
 
 export const GrowthEngine = () => {
   const [rewards, setRewards] = useState([
@@ -21,7 +22,10 @@ export const GrowthEngine = () => {
       <div className="flex justify-between items-end border-b border-ink pb-6">
         <div className="space-y-2">
           <p className="text-[10px] font-black uppercase tracking-widest text-ink/40">Audience Expansion</p>
-          <h2 className="text-4xl font-serif font-bold">Growth Engine</h2>
+          <h2 className="text-4xl font-serif font-bold flex items-center gap-3">
+            Growth Engine
+            <HelpTooltip guideKey="growth-overview" />
+          </h2>
         </div>
         <div className="flex items-center gap-4">
           <div className="flex items-center gap-2 px-4 py-2 bg-burgundy/5 border border-burgundy/20">
@@ -55,7 +59,10 @@ export const GrowthEngine = () => {
         {/* Reward Tiers */}
         <div className="space-y-6">
           <div className="flex justify-between items-center border-b border-border-hairline pb-4">
-            <h3 className="font-sans font-black uppercase tracking-widest text-xs">Reward Milestones</h3>
+            <h3 className="font-sans font-black uppercase tracking-widest text-xs flex items-center gap-2">
+              Reward Milestones
+              <HelpTooltip guideKey="growth-rewards" />
+            </h3>
             <button className="text-[10px] font-black uppercase tracking-widest text-burgundy hover:underline">
               + Add Tier
             </button>
@@ -93,7 +100,10 @@ export const GrowthEngine = () => {
         {/* Leaderboard */}
         <div className="space-y-6">
           <div className="flex justify-between items-center border-b border-border-hairline pb-4">
-            <h3 className="font-sans font-black uppercase tracking-widest text-xs">Top Referrers</h3>
+            <h3 className="font-sans font-black uppercase tracking-widest text-xs flex items-center gap-2">
+              Top Referrers
+              <HelpTooltip guideKey="growth-leaderboard" />
+            </h3>
             <button className="text-[10px] font-black uppercase tracking-widest text-ink/40 hover:text-ink">
               View All
             </button>
