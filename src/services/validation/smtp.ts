@@ -5,12 +5,18 @@ export interface SMTPResult {
   code: number;
   message: string;
   isCatchAll?: boolean;
+  isTemporaryFailure?: boolean;
 }
 
 export class SMTPVerificationService {
   private static TIMEOUT = 10000; // 10 seconds
+  private static EHLO_DOMAINS = ['mail1.signal.app', 'mail2.signal.app', 'verify.signal.app'];
 
-  static async verify(email: string, mxHost: string, fromEmail: string = 'verify@example.com'): Promise<SMTPResult> {
+  private static getEhloDomain() {
+    return this.EHLO_DOMAINS[Math.floor(Math.random() * this.EHLO_DOMAINS.length)];
+  }
+
+  static async verify(email: string, mxHost: string, fromEmail: string = 'verify@signal.app'): Promise<SMTPResult> {
     return new Promise((resolve) => {
       const socket = net.createConnection(25, mxHost);
       let step = 0;
@@ -30,28 +36,35 @@ export class SMTPVerificationService {
       });
 
       socket.on('timeout', () => {
-        finish({ success: false, code: 408, message: 'Connection timeout' });
+        finish({ success: false, code: 408, message: 'Connection timeout', isTemporaryFailure: true });
       });
 
       socket.on('error', (err) => {
-        finish({ success: false, code: 500, message: err.message });
+        finish({ success: false, code: 500, message: err.message, isTemporaryFailure: true });
       });
 
       socket.on('data', (data) => {
         const response = data.toString();
         const code = parseInt(response.substring(0, 3));
 
-        if (code >= 400) {
-          finish({ success: false, code, message: response.trim() });
+        // Handle temporary failures (4xx)
+        if (code >= 400 && code < 500) {
+          finish({ success: false, code, message: response.trim(), isTemporaryFailure: true });
+          return;
+        }
+
+        // Handle hard failures (5xx)
+        if (code >= 500) {
+          finish({ success: false, code, message: response.trim(), isTemporaryFailure: false });
           return;
         }
 
         switch (step) {
           case 0: // Greeting received
-            socket.write(`HELO ${mxHost}\r\n`);
+            socket.write(`EHLO ${this.getEhloDomain()}\r\n`);
             step++;
             break;
-          case 1: // HELO response
+          case 1: // EHLO response
             socket.write(`MAIL FROM:<${fromEmail}>\r\n`);
             step++;
             break;
