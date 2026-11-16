@@ -1,0 +1,479 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+
+concurrency:
+  group: ci-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+env:
+  CI: "true"
+  HUSKY: "0"
+  PNPM_VERSION: "11.17.0"
+  NODE_VERSION: "22.22.0"
+
+jobs:
+  quality:
+    name: Quality, database and build
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    services:
+      postgres:
+        image: postgres:16-alpine
+        env:
+          POSTGRES_USER: signal_ci
+          POSTGRES_PASSWORD: signal_ci_password
+          POSTGRES_DB: signal_ci
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U signal_ci -d signal_ci"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 10
+      redis:
+        image: redis:7-alpine
+        ports:
+          - 6379:6379
+        options: >-
+          --health-cmd "redis-cli ping"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 10
+    env:
+      NODE_ENV: test
+      VITEST: "true"
+      DATABASE_URL: postgresql://signal_ci:signal_ci_password@127.0.0.1:5432/signal_ci
+      REDIS_URL: redis://127.0.0.1:6379
+      SESSION_SECRET: ci-only-session-secret-ci-only-session-secret-ci-only-session-secret-0001
+      APP_URL: http://127.0.0.1:3000
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: pnpm/action-setup@v4
+        with:
+          version: ${{ env.PNPM_VERSION }}
+          run_install: false
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+          cache: pnpm
+
+      - name: Install exact dependencies
+        run: pnpm install --frozen-lockfile
+
+      - name: Validate Prisma schema
+        run: pnpm exec prisma validate
+
+      - name: Generate Prisma client
+        run: pnpm exec prisma generate
+
+      - name: Apply migrations to a fresh PostgreSQL database
+        run: |
+          pnpm exec prisma migrate deploy
+          pnpm exec prisma migrate deploy
+          pnpm exec prisma migrate status
+
+      - name: Verify tenant AI ledger and budget gate
+        env:
+          AI_LEDGER_ALLOW_FIXTURE: "true"
+          AI_MONTHLY_BUDGET_USD: "25"
+        run: pnpm exec tsx scripts/ai-ledger-smoke.mjs
+
+      - name: Validate operational shell scripts
+        run: |
+          sh -n docker-entrypoint.sh
+          sh -n scripts/backup.sh
+          sh -n scripts/restore-test.sh
+          sh -n scripts/analytics-query-plan-smoke.sh
+          node scripts/check-alert-rules.mjs
+          node scripts/check-documentation-truth.mjs
+
+      - name: Lint
+        run: pnpm run lint
+
+      - name: Type check
+        run: pnpm run typecheck
+
+      - name: Unit, property and integration tests with coverage
+        run: pnpm run test:coverage
+
+      - name: Enforce coverage ratchet
+        run: node scripts/check-coverage-ratchet.mjs
+
+      - name: Production build
+        run: pnpm run build
+
+      - name: Enforce frontend bundle budgets
+        run: node scripts/check-bundle-budget.mjs
+
+      - name: Reject server secrets in the frontend bundle
+        run: node scripts/scan-client-secrets.mjs
+
+      - name: Upload coverage evidence
+        uses: actions/upload-artifact@v4
+        with:
+          name: signal-coverage-${{ github.sha }}
+          path: coverage/
+          if-no-files-found: error
+          retention-days: 14
+
+      - name: Upload coverage-independent build evidence
+        uses: actions/upload-artifact@v4
+        with:
+          name: signal-build-${{ github.sha }}
+          path: |
+            dist/
+            dist-server/
+          if-no-files-found: error
+          retention-days: 7
+
+  e2e:
+    name: Desktop and mobile browser acceptance
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    needs: [quality]
+    services:
+      postgres:
+        image: postgres:16-alpine
+        env:
+          POSTGRES_USER: signal_e2e
+          POSTGRES_PASSWORD: signal_e2e_password
+          POSTGRES_DB: signal_e2e
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U signal_e2e -d signal_e2e"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 10
+      redis:
+        image: redis:7-alpine
+        ports:
+          - 6379:6379
+        options: >-
+          --health-cmd "redis-cli ping"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 10
+    env:
+      NODE_ENV: development
+      DATABASE_URL: postgresql://signal_e2e:signal_e2e_password@127.0.0.1:5432/signal_e2e
+      REDIS_URL: redis://127.0.0.1:6379
+      SESSION_SECRET: ci-e2e-session-secret-ci-e2e-session-secret-ci-e2e-session-secret-0001
+      APP_URL: http://127.0.0.1:3000
+      BASE_URL: http://127.0.0.1:3000
+      API_RATE_LIMIT_MAX: 2000
+      SENTRY_DSN: ""
+      GEMINI_API_KEY: ""
+      E2E_EMAIL: owner@signal.test
+      E2E_PASSWORD: SignalE2EPassword1!
+      BOOTSTRAP_ADMIN_EMAIL: owner@signal.test
+      BOOTSTRAP_ADMIN_PASSWORD: SignalE2EPassword1!
+      BOOTSTRAP_ORGANIZATION_NAME: Signal E2E
+      BOOTSTRAP_ORGANIZATION_SLUG: signal-e2e
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: pnpm/action-setup@v4
+        with:
+          version: ${{ env.PNPM_VERSION }}
+          run_install: false
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+          cache: pnpm
+
+      - name: Install exact dependencies
+        run: pnpm install --frozen-lockfile
+
+      - name: Prepare isolated E2E database
+        run: |
+          pnpm exec prisma generate
+          pnpm exec prisma migrate deploy
+          node scripts/bootstrap-admin.mjs
+
+      - name: Install Chromium runtime
+        run: pnpm exec playwright install --with-deps chromium
+
+      - name: Start SIGNAL and wait for health
+        run: |
+          pnpm run dev > /tmp/signal-e2e.log 2>&1 &
+          for attempt in $(seq 1 30); do
+            if curl --fail --silent --show-error "$BASE_URL/health"; then
+              exit 0
+            fi
+            sleep 2
+          done
+          cat /tmp/signal-e2e.log
+          exit 1
+
+      - name: Run health and authenticated API load smoke
+        run: |
+          LOAD_TEST_URL="$BASE_URL/health" \
+          LOAD_TEST_CONCURRENCY=20 \
+          LOAD_TEST_REQUESTS=950 \
+          LOAD_TEST_MAX_P95_MS=250 \
+          LOAD_TEST_MAX_ERROR_RATE=0 \
+          LOAD_TEST_OUTPUT=test-results/load/health.json \
+          pnpm test:load
+          LOAD_TEST_URL="$BASE_URL/api/stats/summary" \
+          LOAD_TEST_EMAIL="$E2E_EMAIL" \
+          LOAD_TEST_PASSWORD="$E2E_PASSWORD" \
+          LOAD_TEST_CONCURRENCY=5 \
+          LOAD_TEST_REQUESTS=50 \
+          LOAD_TEST_MAX_P95_MS=500 \
+          LOAD_TEST_MAX_ERROR_RATE=0.01 \
+          LOAD_TEST_OUTPUT=test-results/load/stats-summary.json \
+          pnpm test:load
+
+      - name: Run desktop and mobile Playwright acceptance
+        run: pnpm exec playwright test
+
+      - name: Upload load-smoke evidence
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: signal-load-smoke-${{ github.sha }}
+          path: test-results/load/
+          if-no-files-found: warn
+          retention-days: 14
+
+      - name: Upload Playwright failure evidence
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: signal-playwright-${{ github.sha }}
+          path: |
+            playwright-report/
+            test-results/playwright/
+            /tmp/signal-e2e.log
+          if-no-files-found: warn
+          retention-days: 14
+
+  disaster_recovery:
+    name: Backup and isolated restore drill
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    needs: [quality]
+    services:
+      postgres:
+        image: postgres:16-alpine
+        env:
+          POSTGRES_USER: signal_dr
+          POSTGRES_PASSWORD: signal_dr_password
+          POSTGRES_DB: signal_dr
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U signal_dr -d signal_dr"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 10
+    env:
+      NODE_ENV: test
+      DATABASE_URL: postgresql://signal_dr:signal_dr_password@127.0.0.1:5432/signal_dr
+      BOOTSTRAP_ADMIN_EMAIL: restore-owner@signal.test
+      BOOTSTRAP_ADMIN_PASSWORD: SignalRestorePassword1!
+      BOOTSTRAP_ORGANIZATION_NAME: Signal Restore Drill
+      BOOTSTRAP_ORGANIZATION_SLUG: signal-restore-drill
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: pnpm/action-setup@v4
+        with:
+          version: ${{ env.PNPM_VERSION }}
+          run_install: false
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+          cache: pnpm
+
+      - name: Install exact dependencies
+        run: pnpm install --frozen-lockfile
+
+      - name: Prepare restore source database
+        run: |
+          pnpm exec prisma generate
+          pnpm exec prisma migrate deploy
+          node scripts/bootstrap-admin.mjs
+
+      - name: Create verified backup and restore into an isolated database
+        run: |
+          mkdir -p "$RUNNER_TEMP/signal-backups"
+          docker run --rm --network host \
+            -v "$GITHUB_WORKSPACE:/workspace:ro" \
+            -e DATABASE_URL="$DATABASE_URL" \
+            -e QUERY_PLAN_ALLOW_FIXTURE=true \
+            postgres:16-alpine /bin/sh /workspace/scripts/query-plan-smoke.sh \
+            > "$RUNNER_TEMP/signal-backups/query-plan.txt"
+          cat "$RUNNER_TEMP/signal-backups/query-plan.txt"
+          docker run --rm --network host \
+            -v "$GITHUB_WORKSPACE:/workspace:ro" \
+            -e DATABASE_URL="$DATABASE_URL" \
+            -e QUERY_PLAN_ALLOW_FIXTURE=true \
+            postgres:16-alpine /bin/sh /workspace/scripts/analytics-query-plan-smoke.sh \
+            > "$RUNNER_TEMP/signal-backups/analytics-query-plan.txt"
+          cat "$RUNNER_TEMP/signal-backups/analytics-query-plan.txt"
+          node scripts/connection-pool-smoke.mjs \
+            > "$RUNNER_TEMP/signal-backups/connection-pool.txt"
+          cat "$RUNNER_TEMP/signal-backups/connection-pool.txt"
+          docker run --rm --network host \
+            -v "$GITHUB_WORKSPACE:/workspace:ro" \
+            -v "$RUNNER_TEMP/signal-backups:/backups" \
+            -e DATABASE_URL="$DATABASE_URL" \
+            -e BACKUP_DIR=/backups \
+            postgres:16-alpine /bin/sh /workspace/scripts/backup.sh
+          docker run --rm --network host \
+            -v "$GITHUB_WORKSPACE:/workspace:ro" \
+            -v "$RUNNER_TEMP/signal-backups:/backups" \
+            -e DATABASE_URL="$DATABASE_URL" \
+            -e BACKUP_DIR=/backups \
+            postgres:16-alpine /bin/sh /workspace/scripts/restore-test.sh
+
+      - name: Upload DR evidence
+        uses: actions/upload-artifact@v4
+        with:
+          name: signal-restore-drill-${{ github.sha }}
+          path: ${{ runner.temp }}/signal-backups/
+          if-no-files-found: error
+          retention-days: 14
+
+  security:
+    name: Production dependency audit
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: pnpm/action-setup@v4
+        with:
+          version: ${{ env.PNPM_VERSION }}
+          run_install: false
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+          cache: pnpm
+
+      - name: Install exact dependencies
+        run: pnpm install --frozen-lockfile
+
+      - name: Reject high and critical production vulnerabilities
+        run: pnpm audit --prod --audit-level high
+
+  docker:
+    name: Production image
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    needs: [quality, security, e2e, disaster_recovery]
+    services:
+      postgres:
+        image: postgres:16-alpine
+        env:
+          POSTGRES_USER: signal_smoke
+          POSTGRES_PASSWORD: signal_smoke_password
+          POSTGRES_DB: signal_smoke
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U signal_smoke -d signal_smoke"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 10
+      redis:
+        image: redis:7-alpine
+        ports:
+          - 6379:6379
+        options: >-
+          --health-cmd "redis-cli ping"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 10
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: docker/setup-buildx-action@v3
+
+      - name: Build production runtime image
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          target: runtime
+          load: true
+          push: false
+          tags: signal:${{ github.sha }}
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
+
+      - name: Smoke production runtime image
+        env:
+          DATABASE_URL: postgresql://signal_smoke:signal_smoke_password@127.0.0.1:5432/signal_smoke
+          REDIS_URL: redis://127.0.0.1:6379
+          SESSION_SECRET: ci-only-runtime-session-secret-ci-only-runtime-session-secret-0001
+          EMAIL_TRACKING_SECRET: ci-only-runtime-tracking-secret-ci-only-runtime-tracking-secret
+          ENCRYPTION_KEY: 0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef
+        run: |
+          set -euo pipefail
+          container_id="$(docker run -d --network host \
+            -e NODE_ENV=production \
+            -e PORT=3000 \
+            -e APP_URL=http://127.0.0.1:3000 \
+            -e DATABASE_URL="$DATABASE_URL" \
+            -e REDIS_URL="$REDIS_URL" \
+            -e SESSION_SECRET="$SESSION_SECRET" \
+            -e EMAIL_TRACKING_SECRET="$EMAIL_TRACKING_SECRET" \
+            -e ENCRYPTION_KEY="$ENCRYPTION_KEY" \
+            "signal:${{ github.sha }}")"
+          trap 'docker logs "$container_id" || true; docker rm -f "$container_id" || true' EXIT
+          for attempt in $(seq 1 30); do
+            if curl --fail --silent --show-error http://127.0.0.1:3000/health > runtime-health.json; then
+              cat runtime-health.json
+              exit 0
+            fi
+            sleep 2
+          done
+          echo "Production image failed runtime health smoke" >&2
+          exit 1
+
+  publish:
+    name: Publish immutable image
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    needs: [docker]
+    if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+    permissions:
+      contents: read
+      packages: write
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: docker/setup-buildx-action@v3
+
+      - uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.repository_owner }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Publish commit-addressable image
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          target: runtime
+          push: true
+          tags: |
+            ghcr.io/${{ github.repository_owner }}/signal:${{ github.sha }}
+            ghcr.io/${{ github.repository_owner }}/signal:latest
+          cache-from: type=gha
+          cache-to: type=gha,mode=max

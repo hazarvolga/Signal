@@ -6,7 +6,7 @@ export interface Organization {
   address?: string;
   timezone: string;
   createdAt: string;
-  
+
   // SSO Config
   ssoEnabled: boolean;
   ssoDomain?: string;
@@ -18,13 +18,13 @@ export interface User {
   id: string;
   email: string;
   name: string;
-  role: 'OWNER' | 'ADMIN' | 'EDITOR' | 'ANALYST' | 'VIEWER';
-  status: 'PENDING' | 'ACTIVE';
+  role: "OWNER" | "ADMIN" | "EDITOR" | "ANALYST" | "VIEWER";
+  status: "PENDING" | "ACTIVE";
   roleId?: string;
   customRole?: Role;
   organizationId: string;
   organization?: Organization;
-  
+
   // SSO & MFA
   ssoId?: string;
   ssoProvider?: string;
@@ -46,7 +46,7 @@ export interface Contact {
   firstName?: string;
   lastName?: string;
   phone?: string;
-  status: 'SUBSCRIBED' | 'UNSUBSCRIBED' | 'BOUNCED' | 'COMPLAINED' | 'CLEANED';
+  status: "SUBSCRIBED" | "UNSUBSCRIBED" | "BOUNCED" | "COMPLAINED" | "CLEANED";
   source?: string;
   engagementScore: number;
   customFields: string;
@@ -81,7 +81,7 @@ export interface Product {
   currency: string;
   imageUrl?: string;
   productUrl?: string;
-  source: 'SHOPIFY' | 'WOOCOMMERCE' | 'CUSTOM';
+  source: "SHOPIFY" | "WOOCOMMERCE" | "CUSTOM";
   organizationId: string;
   createdAt: string;
 }
@@ -110,8 +110,8 @@ export interface Brand {
 
 export interface Integration {
   id: string;
-  type: 'SHOPIFY' | 'WOOCOMMERCE' | 'ZAPIER' | 'HUBSPOT';
-  status: 'CONNECTED' | 'DISCONNECTED' | 'ERROR';
+  type: "SHOPIFY" | "WOOCOMMERCE" | "ZAPIER" | "HUBSPOT";
+  status: "CONNECTED" | "DISCONNECTED" | "ERROR";
   config: string; // JSON string
   organizationId: string;
   createdAt: string;
@@ -132,7 +132,7 @@ export interface ApprovalRequest {
   templateId?: string;
   campaignId?: string;
   requesterId: string;
-  status: 'PENDING' | 'APPROVED' | 'REJECTED';
+  status: "PENDING" | "APPROVED" | "REJECTED";
   comments?: string;
   template?: Template;
   campaign?: Campaign;
@@ -144,7 +144,7 @@ export interface Template {
   name: string;
   content: string;
   category?: string;
-  status: 'DRAFT' | 'IN_REVIEW' | 'APPROVED';
+  status: "DRAFT" | "IN_REVIEW" | "APPROVED";
   organizationId: string;
   createdAt: string;
 }
@@ -162,7 +162,7 @@ export interface CustomFieldDefinition {
   id: string;
   name: string;
   key: string;
-  type: 'TEXT' | 'NUMBER' | 'DATE' | 'BOOLEAN';
+  type: "TEXT" | "NUMBER" | "DATE" | "BOOLEAN";
   organizationId: string;
   createdAt: string;
 }
@@ -176,14 +176,25 @@ export interface Campaign {
   fromEmail: string;
   replyTo?: string;
   content: string;
-  channel: 'EMAIL' | 'SMS' | 'WHATSAPP' | 'IN_APP';
+  channel: "EMAIL" | "SMS" | "WHATSAPP" | "IN_APP";
   subjectB?: string;
   contentB?: string;
   testPercentage?: number;
   testDuration?: number;
-  winnerCriteria?: 'OPEN_RATE' | 'CLICK_RATE';
-  type: 'REGULAR' | 'AB' | 'AUTOMATED' | 'TRANSACTIONAL';
-  status: 'DRAFT' | 'IN_REVIEW' | 'SCHEDULED' | 'SENDING' | 'SENT' | 'ARCHIVED';
+  winnerCriteria?: "OPEN_RATE" | "CLICK_RATE";
+  type: "REGULAR" | "AB" | "AUTOMATED" | "TRANSACTIONAL";
+  status:
+    | "DRAFT"
+    | "IN_REVIEW"
+    | "SCHEDULED"
+    | "QUEUED"
+    | "SENDING"
+    | "TESTING"
+    | "PARTIAL"
+    | "FAILED"
+    | "PAUSED"
+    | "SENT"
+    | "ARCHIVED";
   timezone: string;
   scheduledAt?: string;
   sentAt?: string;
@@ -196,7 +207,7 @@ export interface Campaign {
 export interface Flow {
   id: string;
   name: string;
-  status: 'DRAFT' | 'ACTIVE' | 'PAUSED';
+  status: "DRAFT" | "ACTIVE" | "PAUSED";
   nodes: string; // JSON string
   edges: string; // JSON string
   scheduledAt?: string;
@@ -228,7 +239,7 @@ export interface ConsentLog {
   id: string;
   contactId: string;
   contact?: Contact;
-  action: 'SUBSCRIBE' | 'UNSUBSCRIBE' | 'PREFERENCE_UPDATE' | 'DATA_EXPORT' | 'DATA_DELETE';
+  action: "SUBSCRIBE" | "UNSUBSCRIBE" | "PREFERENCE_UPDATE" | "DATA_EXPORT" | "DATA_DELETE";
   source: string;
   ipAddress?: string;
   userAgent?: string;
@@ -239,11 +250,18 @@ export interface DataRequest {
   id: string;
   contactId: string;
   contact?: Contact;
-  type: 'EXPORT' | 'DELETE';
-  status: 'PENDING' | 'COMPLETED' | 'CANCELLED';
+  type: "EXPORT" | "DELETE";
+  status: "PENDING" | "COMPLETED" | "CANCELLED";
   organizationId: string;
   createdAt: string;
   updatedAt: string;
+}
+
+export interface GrowthDataPoint {
+  month: string;
+  date: string;
+  subscribers: number;
+  churn: number;
 }
 
 export interface DashboardStats {
@@ -251,6 +269,15 @@ export interface DashboardStats {
   totalCampaigns: number;
   totalSent: number;
   totalOpens: number;
+  avgOpenRate?: number;
+  avgClickRate?: number;
+  revenueAttributed?: number;
+  activeCampaigns?: number;
+  bounceRate?: number;
+  unsubscribeRate?: number;
+  retentionRate?: number;
+  acquisitionThisMonth?: number;
+  growthData?: GrowthDataPoint[];
 }
 
 export interface CampaignAnalytics {
@@ -277,7 +304,7 @@ export interface CampaignAnalytics {
 export interface ValidationLog {
   id: string;
   email: string;
-  status: 'valid' | 'invalid' | 'risky' | 'unknown';
+  status: "valid" | "invalid" | "risky" | "unknown";
   score: number;
   confidence: number;
   details: string; // JSON string
@@ -288,7 +315,7 @@ export interface ValidationLog {
 export interface BulkValidationJob {
   id: string;
   name?: string;
-  status: 'PENDING' | 'PROCESSING' | 'COMPLETED' | 'FAILED';
+  status: "PENDING" | "PROCESSING" | "COMPLETED" | "FAILED";
   totalCount: number;
   processedCount: number;
   validCount: number;

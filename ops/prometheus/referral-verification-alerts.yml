@@ -1,0 +1,14 @@
+groups:
+  - name: signal-referral-verification
+    rules:
+      - alert: SignalReferralVerificationDeliveryExhausted
+        expr: increase(signal_referral_verification_final_failures_total[15m]) > 0
+        for: 1m
+        labels:
+          severity: warning
+          service: signal
+          component: referral-verification
+        annotations:
+          summary: Referral verification email exhausted all delivery attempts
+          description: At least one referral verification message reached its final failed state during the last 15 minutes.
+          runbook_url: /docs/runbooks/REFERRAL_VERIFICATION.md

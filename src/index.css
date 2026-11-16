@@ -1,4 +1,4 @@
-@import url('https://fonts.googleapis.com/css2?family=Cormorant+Garamond:ital,wght@0,300;0,400;0,500;0,600;0,700;1,300;1,400;1,500;1,600;1,700&family=Playfair+Display:ital,wght@0,400;0,500;0,600;0,700;0,800;0,900;1,400;1,500;1,600;1,700;1,800;1,900&family=Libre+Franklin:ital,wght@0,100;0,200;0,300;0,400;0,500;0,600;0,700;0,800;0,900;1,100;1,200;1,300;1,400;1,500;1,600;1,700;1,800;1,900&family=Source+Serif+4:ital,opsz,wght@0,8..60,200;0,8..60,300;0,8..60,400;0,8..60,500;0,8..60,600;0,8..60,700;0,8..60,800;0,8..60,900;1,8..60,200;1,8..60,300;1,8..60,400;1,8..60,500;1,8..60,600;1,8..60,700;1,8..60,800;1,8..60,900&family=Courier+Prime:ital,wght@0,400;0,700;1,400;1,700&display=swap');
+@import url("https://fonts.googleapis.com/css2?family=Cormorant+Garamond:ital,wght@0,300;0,400;0,500;0,600;0,700;1,300;1,400;1,500;1,600;1,700&family=Playfair+Display:ital,wght@0,400;0,500;0,600;0,700;0,800;0,900;1,400;1,500;1,600;1,700;1,800;1,900&family=Libre+Franklin:ital,wght@0,100;0,200;0,300;0,400;0,500;0,600;0,700;0,800;0,900;1,100;1,200;1,300;1,400;1,500;1,600;1,700;1,800;1,900&family=Source+Serif+4:ital,opsz,wght@0,8..60,200;0,8..60,300;0,8..60,400;0,8..60,500;0,8..60,600;0,8..60,700;0,8..60,800;0,8..60,900;1,8..60,200;1,8..60,300;1,8..60,400;1,8..60,500;1,8..60,600;1,8..60,700;1,8..60,800;1,8..60,900&family=Courier+Prime:ital,wght@0,400;0,700;1,400;1,700&display=swap");
 @import "tailwindcss";
 @import "reactflow/dist/style.css";
 
@@ -15,43 +15,123 @@
   --color-brass: var(--brass);
   --color-surface: var(--surface);
   --color-border-hairline: var(--border-hairline);
-  
+  --color-inverse: var(--inverse);
+  --color-on-inverse: var(--on-inverse);
+
   --color-status-success: var(--status-success);
   --color-status-scheduled: var(--status-scheduled);
   --color-status-warning: var(--status-warning);
   --color-status-draft: var(--status-draft);
 }
 
+/* Keep secondary copy readable regardless of Tailwind color opacity utilities. */
+[class~="text-ink/20"],
+[class~="text-ink/30"],
+[class~="text-ink/40"],
+[class~="text-ink/50"],
+[class~="text-ink/60"],
+[class~="text-ink/70"],
+[class~="text-ink/80"] {
+  color: var(--ink-muted) !important;
+}
+
+.metric-label {
+  color: var(--ink-muted) !important;
+}
+
+input::placeholder,
+textarea::placeholder {
+  color: var(--ink-muted) !important;
+  opacity: 1;
+}
+
+.bg-ink [class~="text-burgundy"] {
+  color: #ffaaa7 !important;
+}
+
+.bg-inverse [class~="text-burgundy"] {
+  color: #ffaaa7 !important;
+}
+
+[class~="text-white/40"] {
+  color: #b8b4ac !important;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  *,
+  *::before,
+  *::after {
+    transition: none !important;
+  }
+}
+
+/* Dark theme uses separate foreground and fill treatments for the brand accent. */
+
+.dark [class~="text-burgundy"] {
+  color: #ff8f8b !important;
+}
+
+.dark [class~="text-emerald-800"] {
+  color: #86efac !important;
+}
+
+.dark [class~="bg-ink"][class~="text-white"],
+.dark [class~="bg-ink"] [class~="text-white"],
+.dark [class~="bg-ink"] [class~="text-white/30"],
+.dark [class~="bg-ink"] [class~="text-white/40"],
+.dark [class~="bg-ink"] [class~="text-white/60"] {
+  color: var(--bg) !important;
+}
+
+.dark .bg-ink [class~="text-burgundy"] {
+  color: #8b1a1a !important;
+}
+
 @layer base {
   :root {
-    --bg: #F5F2EC;
-    --ink: #1A1814;
-    --burgundy: #8B1A1A;
-    --brass: #C9A84C;
-    --surface: #EDE9E1;
-    --border-hairline: #D4CFC6;
-    --status-success: #2D5A27;
-    --status-scheduled: #3A4A6B;
-    --status-warning: #9B4A1A;
-    --status-draft: #4A4A4A;
+    --bg: #f5f2ec;
+    --ink: #1a1814;
+    --burgundy: #8b1a1a;
+    --brass: #c9a84c;
+    --surface: #ede9e1;
+    --border-hairline: #d4cfc6;
+    --inverse: #1a1814;
+    --on-inverse: #f5f2ec;
+    --ink-muted: #56534e;
+    --status-success: #2d5a27;
+    --status-scheduled: #3a4a6b;
+    --status-warning: #9b4a1a;
+    --status-draft: #4a4a4a;
   }
 
   .dark {
-    --bg: #12110F;
-    --ink: #E6E2D9;
-    --burgundy: #D64545;
-    --brass: #E6C35C;
-    --surface: #1E1C18;
-    --border-hairline: #2D2B26;
-    --status-success: #4CAF50;
-    --status-scheduled: #64B5F6;
-    --status-warning: #FF9800;
-    --status-draft: #9E9E9E;
+    --bg: #12110f;
+    --ink: #e6e2d9;
+    --burgundy: #b91c1c;
+    --brass: #e6c35c;
+    --surface: #1e1c18;
+    --border-hairline: #2d2b26;
+    --inverse: #1a1814;
+    --on-inverse: #f5f2ec;
+    --ink-muted: #c9c4ba;
+    --status-success: #4caf50;
+    --status-scheduled: #64b5f6;
+    --status-warning: #ff9800;
+    --status-draft: #9e9e9e;
   }
 
   body {
     @apply bg-bg text-ink font-body selection:bg-burgundy selection:text-white transition-colors duration-300;
     position: relative;
+  }
+
+  :where(a, button, input, select, textarea, [role="button"], [role="tab"]):focus-visible {
+    outline: 3px solid var(--brass);
+    outline-offset: 3px;
+  }
+
+  #main-content:focus {
+    outline: none;
   }
 
   body::before {
@@ -67,7 +147,12 @@
     background-image: url("data:image/svg+xml,%3Csvg viewBox='0 0 200 200' xmlns='http://www.w3.org/2000/svg'%3E%3Cfilter id='noiseFilter'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='0.65' numOctaves='3' stitchTiles='stitch'/%3E%3C/filter%3E%3Crect width='100%25' height='100%25' filter='url(%23noiseFilter)'/%3E%3C/svg%3E");
   }
 
-  h1, h2, h3, h4, h5, h6 {
+  h1,
+  h2,
+  h3,
+  h4,
+  h5,
+  h6 {
     @apply font-serif tracking-tight;
   }
 
@@ -77,10 +162,31 @@
 }
 
 @layer components {
+  .skip-link {
+    position: fixed;
+    top: 0.75rem;
+    left: 0.75rem;
+    z-index: 10000;
+    padding: 0.75rem 1rem;
+    background: var(--ink);
+    color: var(--bg);
+    font-family: var(--font-sans);
+    font-size: 0.75rem;
+    font-weight: 800;
+    text-transform: uppercase;
+    letter-spacing: 0.08em;
+    transform: translateY(-200%);
+    transition: transform 150ms ease;
+  }
+
+  .skip-link:focus {
+    transform: translateY(0);
+  }
+
   .btn-primary {
     @apply bg-burgundy text-white px-6 py-2 font-sans font-bold uppercase tracking-widest text-xs transition-all hover:opacity-90 active:scale-95;
   }
-  
+
   .btn-secondary {
     @apply border border-burgundy text-burgundy px-6 py-2 font-sans font-bold uppercase tracking-widest text-xs transition-all hover:bg-burgundy hover:text-white active:scale-95;
   }
@@ -90,19 +196,20 @@
   }
 
   .masthead-link {
-    @apply font-sans font-bold uppercase tracking-widest text-[10px] text-ink/60 hover:text-burgundy transition-colors relative;
+    @apply font-sans font-bold uppercase tracking-wider text-xs text-ink/75 hover:text-burgundy dark:text-ink/90 transition-colors relative py-1;
   }
 
   .masthead-link.active {
-    @apply text-burgundy;
+    @apply text-burgundy font-extrabold;
   }
 
   .masthead-link::after {
     content: "";
-    @apply absolute -bottom-1 left-0 w-0 h-[1px] bg-burgundy transition-all duration-300;
+    @apply absolute -bottom-1 left-0 w-0 h-[2px] bg-burgundy transition-all duration-300;
   }
 
-  .masthead-link:hover::after, .masthead-link.active::after {
+  .masthead-link:hover::after,
+  .masthead-link.active::after {
     @apply w-full;
   }
 
@@ -111,11 +218,38 @@
   }
 
   .metric-label {
-    @apply font-sans uppercase tracking-widest text-[10px] font-black text-ink/40;
+    @apply font-sans uppercase tracking-wider text-xs font-extrabold text-ink/75 dark:text-ink/85;
   }
 
   .metric-delta {
     @apply font-mono text-xs;
+  }
+}
+
+@layer utilities {
+  .text-ink\/20,
+  .text-ink\/30,
+  .text-ink\/40,
+  .text-ink\/50,
+  .text-ink\/60,
+  .text-ink\/70,
+  .text-ink\/80 {
+    color: var(--ink-muted) !important;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  html {
+    scroll-behavior: auto;
+  }
+
+  *,
+  *::before,
+  *::after {
+    animation-duration: 0.01ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.01ms !important;
+    scroll-behavior: auto !important;
   }
 }
 

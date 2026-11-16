@@ -1,7 +1,17 @@
-import React, { useState } from 'react';
-import { CheckCircle2, Loader2 } from 'lucide-react';
+import React, { useState } from "react";
+import { CheckCircle2, Loader2 } from "lucide-react";
 
-export const AmpSurveyPreview = ({ campaignId, contactId, question, options }: { campaignId: string, contactId: string, question: string, options: string[] }) => {
+export const AmpSurveyPreview = ({
+  campaignId,
+  contactId,
+  question,
+  options,
+}: {
+  campaignId: string;
+  contactId: string;
+  question: string;
+  options: string[];
+}) => {
   const [selected, setSelected] = useState<string | null>(null);
   const [isSubmitting, setIsSubmitting] = useState(false);
   const [submitted, setSubmitted] = useState(false);
@@ -10,16 +20,16 @@ export const AmpSurveyPreview = ({ campaignId, contactId, question, options }: {
     setSelected(option);
     setIsSubmitting(true);
     try {
-      await fetch('/api/amp/submit', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
+      await fetch("/api/amp/submit", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
           campaignId,
           contactId,
-          type: 'SURVEY_SUBMIT',
+          type: "SURVEY_SUBMIT",
           question,
-          answer: option
-        })
+          answer: option,
+        }),
       });
       setSubmitted(true);
     } catch (e) {
@@ -34,7 +44,9 @@ export const AmpSurveyPreview = ({ campaignId, contactId, question, options }: {
       <div className="bg-emerald-50 border border-emerald-200 p-6 text-center my-8">
         <CheckCircle2 className="mx-auto text-emerald-500 mb-2" size={24} />
         <h4 className="font-sans font-bold text-emerald-900">Thank you for your feedback!</h4>
-        <p className="text-sm text-emerald-700 mt-1">Your response has been recorded directly from this email.</p>
+        <p className="text-sm text-emerald-700 mt-1">
+          Your response has been recorded directly from this email.
+        </p>
       </div>
     );
   }
@@ -46,18 +58,22 @@ export const AmpSurveyPreview = ({ campaignId, contactId, question, options }: {
       </div>
       <h4 className="font-serif text-lg font-bold text-ink mb-4">{question}</h4>
       <div className="flex flex-wrap gap-2">
-        {options.map(opt => (
+        {options.map((opt) => (
           <button
             key={opt}
             onClick={() => handleSubmit(opt)}
             disabled={isSubmitting}
             className={`px-4 py-2 border text-sm font-sans transition-colors ${
-              selected === opt 
-                ? 'bg-burgundy text-white border-burgundy' 
-                : 'bg-white text-ink border-border-hairline hover:border-burgundy'
+              selected === opt
+                ? "bg-burgundy text-white border-burgundy"
+                : "bg-surface text-ink border-border-hairline hover:border-burgundy"
             }`}
           >
-            {isSubmitting && selected === opt ? <Loader2 size={14} className="animate-spin mx-auto" /> : opt}
+            {isSubmitting && selected === opt ? (
+              <Loader2 size={14} className="animate-spin mx-auto" />
+            ) : (
+              opt
+            )}
           </button>
         ))}
       </div>

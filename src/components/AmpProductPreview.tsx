@@ -1,23 +1,35 @@
-import React, { useState } from 'react';
-import { CheckCircle2, Loader2, ShoppingBag } from 'lucide-react';
+import React, { useState } from "react";
+import { CheckCircle2, Loader2, ShoppingBag } from "lucide-react";
 
-export const AmpProductPreview = ({ campaignId, contactId, productName, price, buttonText }: { campaignId: string, contactId: string, productName: string, price: string, buttonText: string }) => {
+export const AmpProductPreview = ({
+  campaignId,
+  contactId,
+  productName,
+  price,
+  buttonText,
+}: {
+  campaignId: string;
+  contactId: string;
+  productName: string;
+  price: string;
+  buttonText: string;
+}) => {
   const [isPurchasing, setIsPurchasing] = useState(false);
   const [purchased, setPurchased] = useState(false);
 
   const handlePurchase = async () => {
     setIsPurchasing(true);
     try {
-      await fetch('/api/amp/submit', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
+      await fetch("/api/amp/submit", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
           campaignId,
           contactId,
-          type: 'PRODUCT_PURCHASE',
+          type: "PRODUCT_PURCHASE",
           productName,
-          price
-        })
+          price,
+        }),
       });
       setPurchased(true);
     } catch (e) {
@@ -32,7 +44,9 @@ export const AmpProductPreview = ({ campaignId, contactId, productName, price, b
       <div className="bg-emerald-50 border border-emerald-200 p-6 text-center my-8">
         <CheckCircle2 className="mx-auto text-emerald-500 mb-2" size={24} />
         <h4 className="font-sans font-bold text-emerald-900">Purchase Successful!</h4>
-        <p className="text-sm text-emerald-700 mt-1">You have successfully purchased {productName}.</p>
+        <p className="text-sm text-emerald-700 mt-1">
+          You have successfully purchased {productName}.
+        </p>
       </div>
     );
   }
@@ -55,7 +69,7 @@ export const AmpProductPreview = ({ campaignId, contactId, productName, price, b
         className="bg-burgundy text-white px-6 py-3 text-xs font-black uppercase tracking-widest hover:bg-burgundy/90 transition-colors flex items-center gap-2"
       >
         {isPurchasing ? <Loader2 size={16} className="animate-spin" /> : <ShoppingBag size={16} />}
-        {isPurchasing ? 'Processing...' : buttonText}
+        {isPurchasing ? "Processing..." : buttonText}
       </button>
     </div>
   );

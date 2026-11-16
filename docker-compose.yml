@@ -1,0 +1,214 @@
+name: signal
+
+x-app-image: &app-image
+  image: ${SIGNAL_IMAGE:-signal:local}
+  build:
+    context: .
+    target: runtime
+
+x-app-environment: &app-environment
+  NODE_ENV: production
+  PORT: "3000"
+  NODE_OPTIONS: ${NODE_OPTIONS:---max-old-space-size=512}
+  DATABASE_URL: ${DATABASE_URL:?DATABASE_URL must be set}
+  REDIS_URL: ${REDIS_URL:?REDIS_URL must be set}
+  SESSION_SECRET: ${SESSION_SECRET:?SESSION_SECRET must be set}
+  APP_URL: ${APP_URL:?APP_URL must be set}
+  COOKIE_SECURE: ${COOKIE_SECURE:-false}
+  API_RATE_LIMIT_MAX: ${API_RATE_LIMIT_MAX:-2500}
+  AUTH_RATE_LIMIT_MAX: ${AUTH_RATE_LIMIT_MAX:-250}
+  LOG_LEVEL: ${LOG_LEVEL:-info}
+  SENTRY_DSN: ${SENTRY_DSN:-}
+  METRICS_TOKEN: ${METRICS_TOKEN:?METRICS_TOKEN must be set}
+  GEMINI_API_KEY: ${GEMINI_API_KEY:-}
+  AI_MONTHLY_BUDGET_USD: ${AI_MONTHLY_BUDGET_USD:-25}
+  AI_TEXT_REQUEST_RESERVATION_USD: ${AI_TEXT_REQUEST_RESERVATION_USD:-0.25}
+  AI_IMAGE_REQUEST_RESERVATION_USD: ${AI_IMAGE_REQUEST_RESERVATION_USD:-0.05}
+  AI_RESERVATION_TTL_MINUTES: ${AI_RESERVATION_TTL_MINUTES:-15}
+  AI_PRICING_VERSION: ${AI_PRICING_VERSION:-google-2026-08-14}
+  AI_GEMINI_3_FLASH_INPUT_USD_PER_MILLION: ${AI_GEMINI_3_FLASH_INPUT_USD_PER_MILLION:-0.50}
+  AI_GEMINI_3_FLASH_OUTPUT_USD_PER_MILLION: ${AI_GEMINI_3_FLASH_OUTPUT_USD_PER_MILLION:-3.00}
+  AI_GEMINI_2_5_FLASH_IMAGE_INPUT_USD_PER_MILLION: ${AI_GEMINI_2_5_FLASH_IMAGE_INPUT_USD_PER_MILLION:-0.30}
+  AI_GEMINI_2_5_FLASH_IMAGE_USD_PER_IMAGE: ${AI_GEMINI_2_5_FLASH_IMAGE_USD_PER_IMAGE:-0.039}
+  EMAIL_PROVIDER: ${EMAIL_PROVIDER:-}
+  EMAIL_TRACKING_SECRET: ${EMAIL_TRACKING_SECRET:?EMAIL_TRACKING_SECRET must be set}
+  EMAIL_TRACKING_TTL_DAYS: ${EMAIL_TRACKING_TTL_DAYS:-30}
+  AB_MIN_SAMPLE_PER_VARIATION: ${AB_MIN_SAMPLE_PER_VARIATION:-50}
+  EMAIL_QUEUE_BATCH_SIZE: ${EMAIL_QUEUE_BATCH_SIZE:-500}
+  EMAIL_QUEUE_MAX_WAITING: ${EMAIL_QUEUE_MAX_WAITING:-5000}
+  EMAIL_QUEUE_MAX_TOTAL: ${EMAIL_QUEUE_MAX_TOTAL:-6000}
+  EMAIL_QUEUE_MAX_REDIS_MEMORY_PERCENT: ${EMAIL_QUEUE_MAX_REDIS_MEMORY_PERCENT:-80}
+  EMAIL_QUEUE_ADMISSION_LOCK_TTL_MS: ${EMAIL_QUEUE_ADMISSION_LOCK_TTL_MS:-30000}
+  ASSET_MAX_BYTES: ${ASSET_MAX_BYTES:-5242880}
+  ASSET_TENANT_QUOTA_BYTES: ${ASSET_TENANT_QUOTA_BYTES:-52428800}
+  OBJECT_STORAGE_BUCKET: ${OBJECT_STORAGE_BUCKET:-}
+  OBJECT_STORAGE_REGION: ${OBJECT_STORAGE_REGION:-}
+  OBJECT_STORAGE_ENDPOINT: ${OBJECT_STORAGE_ENDPOINT:-}
+  OBJECT_STORAGE_ACCESS_KEY_ID: ${OBJECT_STORAGE_ACCESS_KEY_ID:-}
+  OBJECT_STORAGE_SECRET_ACCESS_KEY: ${OBJECT_STORAGE_SECRET_ACCESS_KEY:-}
+  OBJECT_STORAGE_FORCE_PATH_STYLE: ${OBJECT_STORAGE_FORCE_PATH_STYLE:-false}
+  FROM_EMAIL: ${FROM_EMAIL:-}
+  FROM_NAME: ${FROM_NAME:-}
+  AWS_REGION: ${AWS_REGION:-}
+  AWS_ACCESS_KEY_ID: ${AWS_ACCESS_KEY_ID:-}
+  AWS_SECRET_ACCESS_KEY: ${AWS_SECRET_ACCESS_KEY:-}
+  AWS_SESSION_TOKEN: ${AWS_SESSION_TOKEN:-}
+  SES_SNS_TOPIC_ARNS: ${SES_SNS_TOPIC_ARNS:-}
+  SENDGRID_API_KEY: ${SENDGRID_API_KEY:-}
+  MAILGUN_API_KEY: ${MAILGUN_API_KEY:-}
+  MAILGUN_DOMAIN: ${MAILGUN_DOMAIN:-}
+  RESEND_API_KEY: ${RESEND_API_KEY:-}
+  SMTP_HOST: ${SMTP_HOST:-}
+  SMTP_PORT: ${SMTP_PORT:-587}
+  SMTP_USER: ${SMTP_USER:-}
+  SMTP_PASS: ${SMTP_PASS:-}
+  SHOPIFY_WEBHOOK_SECRET: ${SHOPIFY_WEBHOOK_SECRET:-}
+  DATA_EXPORT_DIR: /data/exports
+  DATA_EXPORT_ENCRYPTION_KEY: ${DATA_EXPORT_ENCRYPTION_KEY:?DATA_EXPORT_ENCRYPTION_KEY must be set}
+  CONSENT_TEXT_VERSION: ${CONSENT_TEXT_VERSION:?CONSENT_TEXT_VERSION must be set}
+
+services:
+  app:
+    <<: *app-image
+    environment:
+      <<: *app-environment
+    ports:
+      - "${APP_BIND_ADDRESS:-127.0.0.1}:${APP_PORT:-3000}:3000"
+    depends_on:
+      db:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    networks:
+      - edge
+      - backend
+    healthcheck:
+      test: ["CMD", "curl", "--fail", "--silent", "--show-error", "http://127.0.0.1:3000/health"]
+      interval: 15s
+      timeout: 5s
+      retries: 5
+      start_period: 45s
+    restart: unless-stopped
+    read_only: true
+    tmpfs:
+      - /tmp:size=64m,mode=1777
+    volumes:
+      - data_exports:/data/exports
+    security_opt:
+      - no-new-privileges:true
+    cap_drop:
+      - ALL
+    mem_limit: ${APP_MEMORY_LIMIT:-768m}
+    cpus: ${APP_CPU_LIMIT:-1.0}
+
+  db:
+    image: postgres:16-alpine
+    environment:
+      POSTGRES_USER: ${POSTGRES_USER:-signal}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?POSTGRES_PASSWORD must be set}
+      POSTGRES_DB: ${POSTGRES_DB:-signal}
+    command:
+      - postgres
+      - -c
+      - max_connections=50
+      - -c
+      - shared_buffers=128MB
+      - -c
+      - effective_cache_size=384MB
+      - -c
+      - work_mem=4MB
+      - -c
+      - maintenance_work_mem=64MB
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+    networks:
+      - backend
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U \"$${POSTGRES_USER}\" -d \"$${POSTGRES_DB}\""]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+      start_period: 15s
+    restart: unless-stopped
+    shm_size: 128mb
+    security_opt:
+      - no-new-privileges:true
+    mem_limit: ${DB_MEMORY_LIMIT:-512m}
+    cpus: ${DB_CPU_LIMIT:-1.0}
+
+  redis:
+    image: redis:7-alpine
+    environment:
+      REDIS_PASSWORD: ${REDIS_PASSWORD:?REDIS_PASSWORD must be set}
+    command:
+      - /bin/sh
+      - -ec
+      - exec redis-server --appendonly yes --requirepass "$${REDIS_PASSWORD}" --maxmemory 128mb --maxmemory-policy noeviction
+    volumes:
+      - redisdata:/data
+    networks:
+      - backend
+    healthcheck:
+      test: ["CMD-SHELL", "REDISCLI_AUTH=\"$${REDIS_PASSWORD}\" redis-cli ping | grep -q PONG"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+      start_period: 10s
+    restart: unless-stopped
+    security_opt:
+      - no-new-privileges:true
+    mem_limit: ${REDIS_MEMORY_LIMIT:-192m}
+    cpus: ${REDIS_CPU_LIMIT:-0.5}
+
+  backup:
+    <<: *app-image
+    entrypoint: ["/bin/sh", "-ec"]
+    command:
+      - |
+        while true; do
+          /app/backup.sh
+          sleep "$${BACKUP_INTERVAL_SECONDS:-86400}"
+        done
+    environment:
+      DATABASE_URL: ${DATABASE_URL:?DATABASE_URL must be set}
+      BACKUP_DIR: /backups
+      BACKUP_INTERVAL_SECONDS: ${BACKUP_INTERVAL_SECONDS:-86400}
+      RETENTION_DAILY: ${RETENTION_DAILY:-7}
+      RETENTION_WEEKLY: ${RETENTION_WEEKLY:-4}
+      RETENTION_MONTHLY: ${RETENTION_MONTHLY:-3}
+      S3_BACKUP_BUCKET: ${S3_BACKUP_BUCKET:?S3_BACKUP_BUCKET must be set for off-site backups}
+      AWS_ACCESS_KEY_ID: ${AWS_ACCESS_KEY_ID:-}
+      AWS_SECRET_ACCESS_KEY: ${AWS_SECRET_ACCESS_KEY:-}
+      AWS_REGION: ${AWS_REGION:-}
+    depends_on:
+      app:
+        condition: service_healthy
+    healthcheck:
+      disable: true
+    volumes:
+      - backups:/backups
+    networks:
+      - edge
+      - backend
+    restart: unless-stopped
+    init: true
+    read_only: true
+    tmpfs:
+      - /tmp:size=32m,mode=1777
+    security_opt:
+      - no-new-privileges:true
+    cap_drop:
+      - ALL
+    mem_limit: ${BACKUP_MEMORY_LIMIT:-192m}
+    cpus: ${BACKUP_CPU_LIMIT:-0.25}
+
+networks:
+  edge:
+  backend:
+    internal: true
+
+volumes:
+  pgdata:
+  redisdata:
+  backups:
+  data_exports:

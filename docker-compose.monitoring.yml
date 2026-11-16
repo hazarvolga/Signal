@@ -1,0 +1,47 @@
+services:
+  prometheus:
+    image: prom/prometheus:v3.13.1
+    restart: unless-stopped
+    command:
+      - --config.file=/etc/prometheus/prometheus.yml
+      - --storage.tsdb.path=/prometheus
+      - --storage.tsdb.retention.time=15d
+    volumes:
+      - ./ops/prometheus/prometheus.yml:/etc/prometheus/prometheus.yml:ro
+      - ./ops/prometheus/referral-verification-alerts.yml:/etc/prometheus/rules/referral-verification-alerts.yml:ro
+      - prometheus_data:/prometheus
+    secrets:
+      - signal_metrics_token
+    ports:
+      - 127.0.0.1:9090:9090
+    depends_on:
+      - app
+      - alertmanager
+    deploy:
+      resources:
+        limits:
+          memory: 384M
+
+  alertmanager:
+    image: prom/alertmanager:v0.33.1
+    restart: unless-stopped
+    command:
+      - --config.file=/etc/alertmanager/alertmanager.yml
+      - --storage.path=/alertmanager
+    volumes:
+      - ${ALERTMANAGER_CONFIG_PATH:?Set ALERTMANAGER_CONFIG_PATH}:/etc/alertmanager/alertmanager.yml:ro
+      - alertmanager_data:/alertmanager
+    ports:
+      - 127.0.0.1:9093:9093
+    deploy:
+      resources:
+        limits:
+          memory: 192M
+
+secrets:
+  signal_metrics_token:
+    file: ${METRICS_TOKEN_FILE:?Set METRICS_TOKEN_FILE}
+
+volumes:
+  prometheus_data:
+  alertmanager_data:

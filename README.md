@@ -1,92 +1,108 @@
 # SIGNAL Broadcast Systems
 
-SIGNAL is a high-performance, production-grade broadcast and marketing automation platform designed for high-deliverability editorial dispatches and complex audience segmentation. Built with a modern full-stack architecture, it integrates advanced AI capabilities, real-time data processing, and robust infrastructure monitoring.
+SIGNAL is a self-hostable email campaign, audience, workflow and AI-assisted content
+platform. The repository contains hardened application code and local/CI acceptance
+gates, but it is currently a **controlled technical pilot**, not an accepted replacement
+for a live email service.
 
-## 🚀 Key Features
+## Current status
 
-- **Campaign Intelligence**: Create and manage high-impact editorial dispatches with advanced scheduling and analytics.
-- **Audience Segmentation**: Dynamic segmentation engine for precise targeting based on behavioral and demographic data.
-- **AI Visual Studio**: Bespoke editorial illustration and brand asset generation powered by Gemini 2.5.
-- **Email Intelligence**: Production-grade verification engine for ensuring high deliverability and domain reputation.
-- **Automations & Workflows**: Visual workflow builder (React Flow) for complex customer journeys and automated dispatches.
-- **Infrastructure Monitoring**: Real-time visibility into server health, database performance (SQLite/Prisma), and message queues (BullMQ/Redis).
-- **Commerce Integration**: Deep integration with Shopify and other commerce platforms for transactional messaging.
-- **Collaboration Suite**: Role-based access control (RBAC), team management, and real-time collaborative features.
-- **Integrated User Guides**: Contextual tooltips and comprehensive documentation for administrators and editors.
+- **Locally verified:** PostgreSQL migrations, tenant-scoped RBAC, durable BullMQ email
+  dispatch, consent/suppression tooling, object storage adapter, AI cost ledger,
+  Prometheus metrics, Docker runtime smoke and desktop/mobile Playwright flows.
+- **Requires live acceptance:** provider delivery, SPF/DKIM/DMARC, bounce/complaint
+  processing, off-site backup, object storage credentials, Alertmanager routing,
+  staging load/soak and legal/İYS operations.
+- **Unavailable:** production OIDC/SAML SSO, MFA enrollment/recovery, SCIM and
+  SMS/WhatsApp/in-app delivery providers.
 
-## 🛠 Tech Stack
+See [Capability Status](docs/CAPABILITY_STATUS.md) for the evidence boundary and
+[GAP Analysis](GAP_ANALIZ_RAPORU.md) for the current readiness assessment.
 
-### Frontend
-- **React 19**: Modern UI development with functional components and hooks.
-- **Vite**: Ultra-fast build tool and development server.
-- **Tailwind CSS 4**: Utility-first styling with the latest features.
-- **Motion (Framer Motion)**: Fluid layout animations and page transitions.
-- **Recharts**: Data visualization for campaign and infrastructure reports.
-- **React Flow**: Visual automation and workflow mapping.
-- **Zustand**: Lightweight and scalable state management.
+## Implemented application surface
 
-### Backend
-- **Express**: Robust Node.js web framework.
-- **Prisma & Better-SQLite3**: Type-safe database access and high-performance local storage.
-- **BullMQ & IORedis**: Distributed task queue for background processing and real-time events.
-- **Socket.io**: Real-time bidirectional communication.
-- **Passport.js**: Secure authentication with OIDC and SAML support.
+- Email campaigns, scheduling, A/B dispatch and PostgreSQL-backed analytics.
+- Tenant-scoped contacts, lists, segments, consent records and suppression ledger.
+- Durable BullMQ/Redis delivery and workflow processing with admission control.
+- Provider adapters for Amazon SES, SMTP, SendGrid, Mailgun and Resend.
+- Gemini-assisted content and image tools with tenant budget reservation and usage ledger.
+- S3/OCI-compatible object storage adapter with bounded uploads and signed reads.
+- Health, Prometheus metrics, structured logs, Sentry integration and operational runbooks.
+- Docker Compose deployment profile for Coolify on a low-memory Oracle VPS.
 
-### AI Integration
-- **Gemini API (@google/genai)**: Advanced generative AI for content and visual asset creation.
+Provider adapters and operational tools are not evidence that an external account,
+domain, legal process or production deployment has been accepted.
 
-## 📦 Getting Started
+## Technology
+
+- Node.js `22.22.0`, TypeScript, Express and Socket.IO.
+- React 19, Vite and Tailwind CSS 4.
+- PostgreSQL 16 through Prisma.
+- Redis 7 and BullMQ.
+- `pnpm 11.17.0` with a frozen lockfile.
+- Docker multi-stage image with non-root runtime and health checks.
+
+## Local development
 
 ### Prerequisites
-- Node.js (v18 or higher)
-- Redis (for BullMQ and real-time features)
 
-### Installation
+- Node.js `22.22.0`
+- Corepack and `pnpm 11.17.0`
+- PostgreSQL 16
+- Redis 7
 
-1. Clone the repository:
-   ```bash
-   git clone https://github.com/your-username/signal-broadcast-systems.git
-   cd signal-broadcast-systems
-   ```
+### Setup
 
-2. Install dependencies:
-   ```bash
-   npm install
-   ```
+```bash
+corepack enable
+corepack prepare pnpm@11.17.0 --activate
+pnpm install --frozen-lockfile
+cp .env.example .env
+```
 
-3. Configure environment variables:
-   Create a `.env` file based on `.env.example`:
-   ```env
-   GEMINI_API_KEY=your_gemini_api_key
-   DATABASE_URL="file:./dev.db"
-   REDIS_URL="redis://localhost:6379"
-   # Add other necessary keys for OIDC/SAML if applicable
-   ```
+Set development-only PostgreSQL and Redis URLs in `.env`. Do not reuse production
+credentials locally and do not commit `.env`.
 
-4. Initialize the database:
-   ```bash
-   npx prisma generate
-   npx prisma db push
-   ```
+```bash
+pnpm exec prisma generate
+pnpm exec prisma migrate deploy
+pnpm dev
+```
 
-5. Start the development server:
-   ```bash
-   npm run dev
-   ```
+The application listens on `http://localhost:3000` by default. `GEMINI_API_KEY` and
+external provider credentials are optional for UI development, but their associated
+features remain unavailable without valid configuration.
 
-## 🏗 Project Structure
+## Verification
 
-- `/src`: Frontend React application.
-  - `/components`: Reusable UI components.
-  - `/services`: API and AI service integrations.
-  - `/constants`: Global configuration and documentation.
-- `/server.ts`: Express backend entry point.
-- `/prisma`: Database schema and migrations.
+```bash
+pnpm typecheck
+pnpm test:run
+pnpm test:coverage
+pnpm build
+```
 
-## 📄 License
+The CI workflow additionally runs database migrations, coverage and bundle ratchets,
+secret scanning, Playwright desktop/mobile flows, load smoke, query-plan gates,
+backup/restore, AI ledger and restricted production-container checks.
 
-This project is licensed under the MIT License - see the [LICENSE](LICENSE) file for details.
+## Deployment
 
----
+Production-style deployment uses Docker Compose with PostgreSQL, Redis, persistent
+volumes, health checks, backup tooling and explicit secret separation. Follow
+[Deployment](docs/DEPLOYMENT.md) and [Runbook](docs/RUNBOOK.md). A successful local
+container run does not replace staging or external-provider acceptance.
 
-*Built with precision by Signal Broadcast Systems.*
+## Security and compliance boundary
+
+The code includes security controls, consent records, suppression, export and deletion
+workflows. These are technical tools, not a legal declaration of GDPR, KVKK or İYS
+compliance. Production use requires named operational ownership and legal review.
+
+Report security issues privately to the repository owner. Do not include credentials,
+personal data or production exports in an issue.
+
+## License
+
+Licensed under the **GNU Affero General Public License v3.0 (`AGPL-3.0-only`)**.
+See [LICENSE](LICENSE) and [Licensing Status](docs/LICENSING.md) for details.

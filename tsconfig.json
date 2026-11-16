@@ -20,7 +20,17 @@
         "./*"
       ]
     },
+    "types": [
+      "vitest/globals",
+      "node",
+      "vite/client"
+    ],
     "allowImportingTsExtensions": true,
     "noEmit": true
-  }
+  },
+  "exclude": [
+    "node_modules",
+    "dist",
+    "dist-server"
+  ]
 }

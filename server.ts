@@ -1,54 +1,170 @@
 import express from "express";
+import cors from "cors";
+import cookieParser from "cookie-parser";
+import helmet from "helmet";
+import rateLimit from "express-rate-limit";
 import cron from "node-cron";
-import { createServer as createViteServer } from "vite";
+
 import path from "path";
 import { fileURLToPath } from "url";
 import crypto from "crypto";
 import { mjmlTemplates } from "./src/data/mjmlTemplates";
-import { geminiService } from "./src/services/geminiService";
 import { redisService } from "./src/services/redisService";
 import passport from "passport";
-import session from "express-session";
-import { Strategy as SAMLStrategy } from "passport-saml";
-import { Strategy as OIDCStrategy } from "passport-openidconnect";
+import session, { type SessionData } from "express-session";
+import { csrfProtectionMiddleware, generateToken } from "./src/middleware/csrf";
+import { validateConfig } from "./src/lib/configValidator";
+import { register, httpRequestDuration, httpRequestsTotal } from "./src/services/metrics";
+import {
+  instrumentQueueWorker,
+  refreshOperationalMetrics,
+} from "./src/services/operationalMetrics";
+import { initSentry } from "./src/services/sentry";
+import { requestIdMiddleware } from "./src/middleware/requestId";
+import { hasValidMetricsCredential } from "./src/lib/metricsAuth";
+import { normalizeWorkflowTemplateSeedData } from "./src/services/workflow/templateGraph";
+import { dispatchOutboundWebhooks } from "./src/services/webhookDispatcher";
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
 
 import { prisma } from "./src/services/prisma";
-import { ValidationEngine } from "./src/services/validation/engine";
 import { Queue } from "bullmq";
 import Redis from "ioredis";
-import { parse } from "csv-parse/sync";
-import multer from "multer";
 import { Server } from "socket.io";
 import http from "http";
+import { TemplateEngine } from "./src/services/template/TemplateEngine";
+import { logger } from "./src/services/logger";
+import type { RouteContext } from "./src/routes/context";
+import { errorHandler } from "./src/middleware/errorHandler";
+import registerCampaignRoutes from "./src/routes/campaigns";
+import registerContactRoutes from "./src/routes/contacts";
+import registerTemplateRoutes from "./src/routes/templates";
+import registerFlowRoutes from "./src/routes/flows";
+import registerAuthRoutes from "./src/routes/auth";
+import registerAdminRoutes from "./src/routes/admin";
+import registerValidationRoutes from "./src/routes/validation";
+import registerAiRoutes from "./src/routes/ai";
+import registerComplianceRoutes from "./src/routes/compliance";
+import registerIntegrationRoutes from "./src/routes/integrations";
+import registerAssetRoutes from "./src/routes/assets";
+import registerFormRoutes from "./src/routes/forms";
+import registerGrowthRoutes from "./src/routes/growth";
+import registerEmailRoutes from "./src/routes/email";
+import {
+  claimScheduledCampaigns,
+  enqueueOrphanedDispatches,
+  initializeCampaignDeliveryQueue,
+} from "./src/services/email/deliveryQueue";
+import { createEmailDeliveryWorker } from "./src/workers/emailDeliveryWorker";
+import { initializeReferralVerificationQueue } from "./src/services/email/referralVerificationQueue";
+import { createReferralVerificationWorker } from "./src/workers/referralVerificationWorker";
+import { refreshSegment } from "./src/lib/segmentRefresh";
+import { dataRequestQueue } from "./src/services/compliance/dataRequestQueue";
+import { dataRequestWorker } from "./src/workers/dataRequestWorker";
+import { hasApiKeyScope, type ApiKeyScope } from "./src/lib/apiKeyScopes";
+import { startWorkflowRuntime } from "./src/workers/workflowWorker";
+import { enqueueWorkflowEvent, getWorkflowQueue } from "./src/services/workflow/queue";
 
-const upload = multer({ storage: multer.memoryStorage() });
-const redisConnection = process.env.REDIS_URL ? new Redis(process.env.REDIS_URL, { 
-  maxRetriesPerRequest: null,
-  enableOfflineQueue: false,
-  retryStrategy(times) {
-    if (times > 3) return null;
-    return Math.min(times * 100, 3000);
-  }
-}) : null;
+initSentry();
+
+const redisConnection = process.env.REDIS_URL
+  ? new Redis(process.env.REDIS_URL, {
+      maxRetriesPerRequest: null,
+      retryStrategy(times) {
+        if (times > 3) return null;
+        return Math.min(times * 100, 3000);
+      },
+    })
+  : null;
 
 if (redisConnection) {
-  redisConnection.on('error', (err: any) => {
-    if (err.code === 'ECONNREFUSED') {
-      console.warn("Redis connection refused. Bulk validation features will be disabled.");
+  redisConnection.on("error", (err: any) => {
+    if (err.code === "ECONNREFUSED") {
+      logger.warn("Redis connection refused. Bulk validation features will be disabled.");
     }
   });
 }
 
-const validationQueue = redisConnection ? new Queue('bulk-validation', { connection: redisConnection as any }) : null;
+class IORedisSessionStore extends session.Store {
+  private readonly prefix = "signal:sess:";
+
+  constructor(
+    private readonly client: Redis,
+    private readonly defaultTtlSeconds = 24 * 60 * 60
+  ) {
+    super();
+  }
+
+  get(sid: string, callback: (err?: unknown, session?: SessionData | null) => void): void {
+    this.client
+      .get(`${this.prefix}${sid}`)
+      .then((value) => callback(undefined, value ? JSON.parse(value) : null))
+      .catch((error) => callback(error));
+  }
+
+  set(sid: string, value: SessionData, callback?: (err?: unknown) => void): void {
+    const maxAgeMs = value.cookie?.maxAge;
+    const ttlSeconds =
+      typeof maxAgeMs === "number"
+        ? Math.max(1, Math.ceil(maxAgeMs / 1000))
+        : this.defaultTtlSeconds;
+
+    this.client
+      .set(`${this.prefix}${sid}`, JSON.stringify(value), "EX", ttlSeconds)
+      .then(() => callback?.())
+      .catch((error) => callback?.(error));
+  }
+
+  destroy(sid: string, callback?: (err?: unknown) => void): void {
+    this.client
+      .del(`${this.prefix}${sid}`)
+      .then(() => callback?.())
+      .catch((error) => callback?.(error));
+  }
+
+  touch(sid: string, value: SessionData, callback?: (err?: unknown) => void): void {
+    const maxAgeMs = value.cookie?.maxAge;
+    const ttlSeconds =
+      typeof maxAgeMs === "number"
+        ? Math.max(1, Math.ceil(maxAgeMs / 1000))
+        : this.defaultTtlSeconds;
+
+    this.client
+      .expire(`${this.prefix}${sid}`, ttlSeconds)
+      .then(() => callback?.())
+      .catch((error) => callback?.(error));
+  }
+}
+
+const validationQueue = redisConnection
+  ? new Queue("bulk-validation", { connection: redisConnection as any })
+  : null;
+const campaignDeliveryQueue = redisConnection
+  ? initializeCampaignDeliveryQueue(redisConnection)
+  : null;
+const emailDeliveryWorker = redisConnection ? createEmailDeliveryWorker(redisConnection) : null;
+const referralVerificationQueue = redisConnection
+  ? initializeReferralVerificationQueue(redisConnection)
+  : null;
+const referralVerificationWorker = redisConnection
+  ? createReferralVerificationWorker(redisConnection)
+  : null;
+const workflowWorker = redisConnection ? startWorkflowRuntime(redisConnection) : null;
+const workflowQueue = redisConnection ? getWorkflowQueue() : null;
+
+instrumentQueueWorker(emailDeliveryWorker, "campaign-delivery");
+instrumentQueueWorker(workflowWorker, "workflow-execution");
+instrumentQueueWorker(dataRequestWorker, "data-requests");
 
 import "./src/workers/validationWorker";
 
+export let app: express.Express;
+export let httpServer: http.Server;
+
 async function seed() {
   let org = await prisma.organization.findFirst();
-  
+
   if (!org) {
     org = await prisma.organization.create({
       data: {
@@ -89,11 +205,39 @@ async function seed() {
   if (contactCount === 0) {
     await prisma.contact.createMany({
       data: [
-        { email: "reader1@example.com", firstName: "Julian", lastName: "Barnes", organizationId: org.id, engagementScore: 85, status: "SUBSCRIBED" },
-        { email: "reader2@example.com", firstName: "Zadie", lastName: "Smith", organizationId: org.id, engagementScore: 92, status: "SUBSCRIBED" },
-        { email: "reader3@example.com", firstName: "Kazuo", lastName: "Ishiguro", organizationId: org.id, engagementScore: 45, status: "SUBSCRIBED" },
-        { email: "reader4@example.com", firstName: "Elena", lastName: "Ferrante", organizationId: org.id, engagementScore: 78, status: "SUBSCRIBED" },
-      ]
+        {
+          email: "reader1@example.com",
+          firstName: "Julian",
+          lastName: "Barnes",
+          organizationId: org.id,
+          engagementScore: 85,
+          status: "SUBSCRIBED",
+        },
+        {
+          email: "reader2@example.com",
+          firstName: "Zadie",
+          lastName: "Smith",
+          organizationId: org.id,
+          engagementScore: 92,
+          status: "SUBSCRIBED",
+        },
+        {
+          email: "reader3@example.com",
+          firstName: "Kazuo",
+          lastName: "Ishiguro",
+          organizationId: org.id,
+          engagementScore: 45,
+          status: "SUBSCRIBED",
+        },
+        {
+          email: "reader4@example.com",
+          firstName: "Elena",
+          lastName: "Ferrante",
+          organizationId: org.id,
+          engagementScore: 78,
+          status: "SUBSCRIBED",
+        },
+      ],
     });
     console.log("Seeded initial contacts.");
   }
@@ -102,10 +246,28 @@ async function seed() {
   if (productCount === 0) {
     await prisma.product.createMany({
       data: [
-        { name: "SIGNAL Editorial Tote", price: 25.00, source: "SHOPIFY", externalId: "sh_1", organizationId: org.id },
-        { name: "Annual Subscription", price: 120.00, source: "CUSTOM", externalId: "sub_1", organizationId: org.id },
-        { name: "Limited Edition Print", price: 45.00, source: "WOOCOMMERCE", externalId: "woo_1", organizationId: org.id },
-      ]
+        {
+          name: "SIGNAL Editorial Tote",
+          price: 25.0,
+          source: "SHOPIFY",
+          externalId: "sh_1",
+          organizationId: org.id,
+        },
+        {
+          name: "Annual Subscription",
+          price: 120.0,
+          source: "CUSTOM",
+          externalId: "sub_1",
+          organizationId: org.id,
+        },
+        {
+          name: "Limited Edition Print",
+          price: 45.0,
+          source: "WOOCOMMERCE",
+          externalId: "woo_1",
+          organizationId: org.id,
+        },
+      ],
     });
     console.log("Seeded initial products.");
   }
@@ -118,8 +280,8 @@ async function seed() {
         primaryColor: "#800020",
         secondaryColor: "#141414",
         fontFamily: "Inter",
-        organizationId: org.id
-      }
+        organizationId: org.id,
+      },
     });
     console.log("Seeded initial brand.");
   }
@@ -130,8 +292,8 @@ async function seed() {
       data: {
         type: "SHOPIFY",
         status: "CONNECTED",
-        organizationId: org.id
-      }
+        organizationId: org.id,
+      },
     });
     console.log("Seeded initial integration.");
   }
@@ -142,10 +304,10 @@ async function seed() {
     if (contact) {
       await prisma.revenue.createMany({
         data: [
-          { amount: 25.00, contactId: contact.id, organizationId: org.id },
-          { amount: 120.00, contactId: contact.id, organizationId: org.id },
-          { amount: 45.00, contactId: contact.id, organizationId: org.id },
-        ]
+          { amount: 25.0, contactId: contact.id, organizationId: org.id },
+          { amount: 120.0, contactId: contact.id, organizationId: org.id },
+          { amount: 45.0, contactId: contact.id, organizationId: org.id },
+        ],
       });
       console.log("Seeded initial revenue.");
     }
@@ -156,238 +318,306 @@ async function seed() {
     // Clear existing to avoid duplicates if we are re-seeding
     await prisma.workflowTemplate.deleteMany({});
     await prisma.workflowTemplate.createMany({
-      data: [
+      data: normalizeWorkflowTemplateSeedData([
         // Onboarding & Activation
         {
           name: "Welcome Sequence",
           description: "Automated welcome series for new signups + dashboard walkthrough.",
           category: "ONBOARDING",
-          nodes: JSON.stringify([{ id: '1', type: 'custom', position: { x: 100, y: 100 }, data: { label: 'User Signed Up', type: 'Trigger', icon: 'Zap', color: 'bg-burgundy/10 text-burgundy' } }]),
-          edges: "[]"
+          nodes: JSON.stringify([
+            {
+              id: "1",
+              type: "custom",
+              position: { x: 100, y: 100 },
+              data: {
+                label: "User Signed Up",
+                type: "Trigger",
+                icon: "Zap",
+                color: "bg-burgundy/10 text-burgundy",
+              },
+            },
+          ]),
+          edges: "[]",
         },
         {
           name: "Product First Use Guide",
           description: "Step-by-step guide for first-time product usage via email or in-app.",
           category: "ONBOARDING",
-          nodes: JSON.stringify([{ id: '1', type: 'custom', position: { x: 100, y: 100 }, data: { label: 'First Login', type: 'Trigger', icon: 'Zap', color: 'bg-burgundy/10 text-burgundy' } }]),
-          edges: "[]"
+          nodes: JSON.stringify([
+            {
+              id: "1",
+              type: "custom",
+              position: { x: 100, y: 100 },
+              data: {
+                label: "First Login",
+                type: "Trigger",
+                icon: "Zap",
+                color: "bg-burgundy/10 text-burgundy",
+              },
+            },
+          ]),
+          edges: "[]",
         },
         {
           name: "Account Verification Reminder",
           description: "Automated reminder for users who haven't verified their account.",
           category: "ONBOARDING",
-          nodes: JSON.stringify([{ id: '1', type: 'trigger', data: { label: 'Verification Pending' } }]),
-          edges: "[]"
+          nodes: JSON.stringify([
+            { id: "1", type: "trigger", data: { label: "Verification Pending" } },
+          ]),
+          edges: "[]",
         },
         {
           name: "Profile Completion Nudge",
           description: "Encourage users to fill out missing profile fields.",
           category: "ONBOARDING",
-          nodes: JSON.stringify([{ id: '1', type: 'trigger', data: { label: 'Profile Incomplete' } }]),
-          edges: "[]"
+          nodes: JSON.stringify([
+            { id: "1", type: "trigger", data: { label: "Profile Incomplete" } },
+          ]),
+          edges: "[]",
         },
         {
           name: "First Feature Adoption",
           description: "Triggered when a core feature hasn't been used within the first week.",
           category: "ONBOARDING",
-          nodes: JSON.stringify([{ id: '1', type: 'trigger', data: { label: 'Feature Not Used' } }]),
-          edges: "[]"
+          nodes: JSON.stringify([
+            { id: "1", type: "trigger", data: { label: "Feature Not Used" } },
+          ]),
+          edges: "[]",
         },
         // Engagement & Retention
         {
           name: "7-Day Inactivity Reminder",
           description: "Re-engage users who haven't logged in for 7 days.",
           category: "ENGAGEMENT",
-          nodes: JSON.stringify([{ id: '1', type: 'trigger', data: { label: 'Inactivity: 7 Days' } }]),
-          edges: "[]"
+          nodes: JSON.stringify([
+            { id: "1", type: "trigger", data: { label: "Inactivity: 7 Days" } },
+          ]),
+          edges: "[]",
         },
         {
           name: "14-Day Inactivity Reminder",
           description: "Re-engage users who haven't logged in for 14 days.",
           category: "ENGAGEMENT",
-          nodes: JSON.stringify([{ id: '1', type: 'trigger', data: { label: 'Inactivity: 14 Days' } }]),
-          edges: "[]"
+          nodes: JSON.stringify([
+            { id: "1", type: "trigger", data: { label: "Inactivity: 14 Days" } },
+          ]),
+          edges: "[]",
         },
         {
           name: "30-Day Inactivity Reminder",
           description: "Re-engage users who haven't logged in for 30 days.",
           category: "ENGAGEMENT",
-          nodes: JSON.stringify([{ id: '1', type: 'trigger', data: { label: 'Inactivity: 30 Days' } }]),
-          edges: "[]"
+          nodes: JSON.stringify([
+            { id: "1", type: "trigger", data: { label: "Inactivity: 30 Days" } },
+          ]),
+          edges: "[]",
         },
         {
           name: "Content Consumption Follow-Up",
           description: "Follow up with users who didn't finish a webinar or course.",
           category: "ENGAGEMENT",
-          nodes: JSON.stringify([{ id: '1', type: 'trigger', data: { label: 'Content Partially Consumed' } }]),
-          edges: "[]"
+          nodes: JSON.stringify([
+            { id: "1", type: "trigger", data: { label: "Content Partially Consumed" } },
+          ]),
+          edges: "[]",
         },
         {
           name: "Feature Adoption Encouragement",
           description: "Personalized usage tips for underutilized features.",
           category: "ENGAGEMENT",
-          nodes: JSON.stringify([{ id: '1', type: 'trigger', data: { label: 'Feature Adoption Opportunity' } }]),
-          edges: "[]"
+          nodes: JSON.stringify([
+            { id: "1", type: "trigger", data: { label: "Feature Adoption Opportunity" } },
+          ]),
+          edges: "[]",
         },
         {
           name: "Weekly Engagement Digest",
           description: "Automated summary of user activity and insights.",
           category: "ENGAGEMENT",
-          nodes: JSON.stringify([{ id: '1', type: 'trigger', data: { label: 'Weekly Schedule' } }]),
-          edges: "[]"
+          nodes: JSON.stringify([{ id: "1", type: "trigger", data: { label: "Weekly Schedule" } }]),
+          edges: "[]",
         },
         {
           name: "Re-engagement Campaign",
           description: "Win back long-term inactive users with special offers.",
           category: "ENGAGEMENT",
-          nodes: JSON.stringify([{ id: '1', type: 'trigger', data: { label: 'Dormant User Detected' } }]),
-          edges: "[]"
+          nodes: JSON.stringify([
+            { id: "1", type: "trigger", data: { label: "Dormant User Detected" } },
+          ]),
+          edges: "[]",
         },
         // Revenue & Upsell
         {
           name: "Trial Expiration Alert",
           description: "Notify users before their trial ends with an upgrade offer.",
           category: "REVENUE",
-          nodes: JSON.stringify([{ id: '1', type: 'trigger', data: { label: 'Trial Ends Soon' } }]),
-          edges: "[]"
+          nodes: JSON.stringify([{ id: "1", type: "trigger", data: { label: "Trial Ends Soon" } }]),
+          edges: "[]",
         },
         {
           name: "Payment Failure Retry Sequence",
           description: "Automated support and retry flow for failed payments.",
           category: "REVENUE",
-          nodes: JSON.stringify([{ id: '1', type: 'trigger', data: { label: 'Payment Failed' } }]),
-          edges: "[]"
+          nodes: JSON.stringify([{ id: "1", type: "trigger", data: { label: "Payment Failed" } }]),
+          edges: "[]",
         },
         {
           name: "Cross-Sell Recommendation",
           description: "Suggest products based on user purchase history.",
           category: "REVENUE",
-          nodes: JSON.stringify([{ id: '1', type: 'trigger', data: { label: 'Purchase Completed' } }]),
-          edges: "[]"
+          nodes: JSON.stringify([
+            { id: "1", type: "trigger", data: { label: "Purchase Completed" } },
+          ]),
+          edges: "[]",
         },
         {
           name: "Upsell / Upgrade Flow",
           description: "Targeted offers for higher-tier plans based on usage.",
           category: "REVENUE",
-          nodes: JSON.stringify([{ id: '1', type: 'trigger', data: { label: 'Usage Threshold Reached' } }]),
-          edges: "[]"
+          nodes: JSON.stringify([
+            { id: "1", type: "trigger", data: { label: "Usage Threshold Reached" } },
+          ]),
+          edges: "[]",
         },
         {
           name: "Subscription Renewal Reminder",
           description: "Remind users of upcoming subscription renewals.",
           category: "REVENUE",
-          nodes: JSON.stringify([{ id: '1', type: 'trigger', data: { label: 'Renewal in 7 Days' } }]),
-          edges: "[]"
+          nodes: JSON.stringify([
+            { id: "1", type: "trigger", data: { label: "Renewal in 7 Days" } },
+          ]),
+          edges: "[]",
         },
         // Customer Support & Feedback
         {
           name: "Support Ticket Follow-Up",
           description: "Automated follow-up for new or delayed support tickets.",
           category: "SUPPORT",
-          nodes: JSON.stringify([{ id: '1', type: 'trigger', data: { label: 'Ticket Created' } }]),
-          edges: "[]"
+          nodes: JSON.stringify([{ id: "1", type: "trigger", data: { label: "Ticket Created" } }]),
+          edges: "[]",
         },
         {
           name: "Post-Support Survey",
           description: "Collect NPS or satisfaction feedback after support resolution.",
           category: "SUPPORT",
-          nodes: JSON.stringify([{ id: '1', type: 'trigger', data: { label: 'Ticket Resolved' } }]),
-          edges: "[]"
+          nodes: JSON.stringify([{ id: "1", type: "trigger", data: { label: "Ticket Resolved" } }]),
+          edges: "[]",
         },
         {
           name: "Churn Prevention Win-Back",
           description: "Special offers for users who cancelled their subscription.",
           category: "SUPPORT",
-          nodes: JSON.stringify([{ id: '1', type: 'trigger', data: { label: 'Subscription Cancelled' } }]),
-          edges: "[]"
+          nodes: JSON.stringify([
+            { id: "1", type: "trigger", data: { label: "Subscription Cancelled" } },
+          ]),
+          edges: "[]",
         },
         {
           name: "Feature Feedback Request",
           description: "Ask for feedback after a user uses a specific feature.",
           category: "SUPPORT",
-          nodes: JSON.stringify([{ id: '1', type: 'trigger', data: { label: 'Feature Used' } }]),
-          edges: "[]"
+          nodes: JSON.stringify([{ id: "1", type: "trigger", data: { label: "Feature Used" } }]),
+          edges: "[]",
         },
         {
           name: "Service Announcement Alerts",
           description: "Automated alerts for maintenance or critical updates.",
           category: "SUPPORT",
-          nodes: JSON.stringify([{ id: '1', type: 'trigger', data: { label: 'System Announcement' } }]),
-          edges: "[]"
+          nodes: JSON.stringify([
+            { id: "1", type: "trigger", data: { label: "System Announcement" } },
+          ]),
+          edges: "[]",
         },
         // Event-Driven
         {
           name: "Abandoned Cart Reminder",
           description: "Recover lost sales with automated cart reminders.",
           category: "EVENT_DRIVEN",
-          nodes: JSON.stringify([{ id: '1', type: 'trigger', data: { label: 'Cart Abandoned' } }]),
-          edges: "[]"
+          nodes: JSON.stringify([{ id: "1", type: "trigger", data: { label: "Cart Abandoned" } }]),
+          edges: "[]",
         },
         {
           name: "Event Registration Confirmation",
           description: "Onboarding and reminders for webinar/event signups.",
           category: "EVENT_DRIVEN",
-          nodes: JSON.stringify([{ id: '1', type: 'trigger', data: { label: 'Event Registered' } }]),
-          edges: "[]"
+          nodes: JSON.stringify([
+            { id: "1", type: "trigger", data: { label: "Event Registered" } },
+          ]),
+          edges: "[]",
         },
         {
           name: "Milestone Achievement",
           description: "Celebrate user successes and usage milestones.",
           category: "EVENT_DRIVEN",
-          nodes: JSON.stringify([{ id: '1', type: 'trigger', data: { label: 'Milestone Reached' } }]),
-          edges: "[]"
+          nodes: JSON.stringify([
+            { id: "1", type: "trigger", data: { label: "Milestone Reached" } },
+          ]),
+          edges: "[]",
         },
         {
           name: "Custom Trigger Event",
           description: "Automation based on custom user behavior events.",
           category: "EVENT_DRIVEN",
-          nodes: JSON.stringify([{ id: '1', type: 'trigger', data: { label: 'Custom Event Fired' } }]),
-          edges: "[]"
+          nodes: JSON.stringify([
+            { id: "1", type: "trigger", data: { label: "Custom Event Fired" } },
+          ]),
+          edges: "[]",
         },
         {
           name: "Birthday / Anniversary Email",
           description: "Personalized greetings for special user dates.",
           category: "EVENT_DRIVEN",
-          nodes: JSON.stringify([{ id: '1', type: 'trigger', data: { label: 'Special Date' } }]),
-          edges: "[]"
+          nodes: JSON.stringify([{ id: "1", type: "trigger", data: { label: "Special Date" } }]),
+          edges: "[]",
         },
         // AI Powered
         {
           name: "Predictive Churn Prevention",
           description: "AI-powered detection of users likely to churn.",
           category: "AI_POWERED",
-          nodes: JSON.stringify([{ id: '1', type: 'trigger', data: { label: 'AI: High Churn Risk' } }]),
-          edges: "[]"
+          nodes: JSON.stringify([
+            { id: "1", type: "trigger", data: { label: "AI: High Churn Risk" } },
+          ]),
+          edges: "[]",
         },
         {
           name: "AI Subject Line Optimization",
           description: "Automatically optimize email subject lines using AI.",
           category: "AI_POWERED",
-          nodes: JSON.stringify([{ id: '1', type: 'trigger', data: { label: 'Campaign Started' } }]),
-          edges: "[]"
+          nodes: JSON.stringify([
+            { id: "1", type: "trigger", data: { label: "Campaign Started" } },
+          ]),
+          edges: "[]",
         },
         {
           name: "Send-Time Personalization",
           description: "Deliver emails at the optimal time for each user.",
           category: "AI_POWERED",
-          nodes: JSON.stringify([{ id: '1', type: 'trigger', data: { label: 'AI: Optimal Time Window' } }]),
-          edges: "[]"
+          nodes: JSON.stringify([
+            { id: "1", type: "trigger", data: { label: "AI: Optimal Time Window" } },
+          ]),
+          edges: "[]",
         },
         {
           name: "Content Personalization Flow",
           description: "AI-driven content selection based on user interests.",
           category: "AI_POWERED",
-          nodes: JSON.stringify([{ id: '1', type: 'trigger', data: { label: 'User Interest Detected' } }]),
-          edges: "[]"
+          nodes: JSON.stringify([
+            { id: "1", type: "trigger", data: { label: "User Interest Detected" } },
+          ]),
+          edges: "[]",
         },
         {
           name: "Engagement Score Automation",
           description: "Branch workflows based on AI engagement scores.",
           category: "AI_POWERED",
-          nodes: JSON.stringify([{ id: '1', type: 'trigger', data: { label: 'Score Threshold Reached' } }]),
-          edges: "[]"
-        }
-      ]
+          nodes: JSON.stringify([
+            { id: "1", type: "trigger", data: { label: "Score Threshold Reached" } },
+          ]),
+          edges: "[]",
+        },
+      ]),
     });
     console.log("Seeded expanded workflow templates.");
   }
@@ -399,9 +629,21 @@ async function seed() {
     if (contact) {
       await prisma.consentLog.createMany({
         data: [
-          { contactId: contact.id, action: "SUBSCRIBE", source: "FORM", ipAddress: "192.168.1.1", organizationId: org.id },
-          { contactId: contact.id, action: "PREFERENCE_UPDATE", source: "PREFERENCE_CENTER", ipAddress: "192.168.1.1", organizationId: org.id },
-        ]
+          {
+            contactId: contact.id,
+            action: "SUBSCRIBE",
+            source: "FORM",
+            ipAddress: "192.168.1.1",
+            organizationId: org.id,
+          },
+          {
+            contactId: contact.id,
+            action: "PREFERENCE_UPDATE",
+            source: "PREFERENCE_CENTER",
+            ipAddress: "192.168.1.1",
+            organizationId: org.id,
+          },
+        ],
       });
       console.log("Seeded initial consent logs.");
     }
@@ -415,7 +657,7 @@ async function seed() {
         data: [
           { contactId: contact.id, type: "EXPORT", status: "COMPLETED", organizationId: org.id },
           { contactId: contact.id, type: "DELETE", status: "PENDING", organizationId: org.id },
-        ]
+        ],
       });
       console.log("Seeded initial data requests.");
     }
@@ -431,8 +673,8 @@ async function seed() {
         fromName: "SIGNAL",
         fromEmail: "news@signal.app",
         status: "IN_REVIEW",
-        organizationId: org.id
-      }
+        organizationId: org.id,
+      },
     });
 
     await prisma.approvalRequest.create({
@@ -440,48 +682,91 @@ async function seed() {
         campaignId: campaign.id,
         requesterId: "Editor in Chief",
         status: "PENDING",
-        comments: "Please review the new layout."
-      }
+        comments: "Please review the new layout.",
+      },
     });
     console.log("Seeded initial approval request.");
   }
-
-  // Update Org/User with SSO/MFA data
-  await prisma.organization.update({
-    where: { id: org.id },
-    data: {
-      ssoEnabled: true,
-      ssoDomain: "signal.app",
-      ssoClientId: "client_123",
-      ssoIssuer: "https://auth.signal.app"
-    }
-  });
-
-  const adminUser = await prisma.user.findFirst({ where: { email: "admin@signal.app" } });
-  if (adminUser) {
-    await prisma.user.update({
-      where: { id: adminUser.id },
-      data: {
-        mfaEnabled: true
-      }
-    });
-  }
 }
 
-async function startServer() {
-  try {
-    await seed();
-  } catch (err) {
-    console.error("Database seeding failed. Ensure DATABASE_URL is correct.", err);
+export async function createApp() {
+  if (process.env.NODE_ENV !== "production") {
+    try {
+      await seed();
+    } catch (err) {
+      console.error("Database seeding failed. Ensure DATABASE_URL is correct.", err);
+      logger.error({ err }, "Database seeding failed");
+    }
   }
-  
-  const app = express();
-  const httpServer = http.createServer(app);
+
+  app = express();
+  httpServer = http.createServer(app);
+
+  const APP_URL = process.env.APP_URL || "http://localhost:3000";
+  const ALLOWED_ORIGINS = process.env.APP_URL
+    ? [process.env.APP_URL]
+    : ["http://localhost:3000", "http://localhost:5173"];
+
+  const isDev = process.env.NODE_ENV !== "production";
+
+  if (!isDev) {
+    app.set("trust proxy", 1);
+  }
+
+  app.use(
+    helmet({
+      contentSecurityPolicy: {
+        directives: {
+          defaultSrc: ["'self'"],
+          scriptSrc: isDev ? ["'self'", "'unsafe-inline'", "'unsafe-eval'"] : ["'self'"],
+          styleSrc: ["'self'", "'unsafe-inline'", "https://fonts.googleapis.com"],
+          fontSrc: ["'self'", "https://fonts.gstatic.com", "data:"],
+          imgSrc: [
+            "'self'",
+            "data:",
+            "https:",
+            "blob:",
+            "https://cdn.tailwindcss.com",
+            "https://fonts.googleapis.com",
+          ],
+          connectSrc: ["'self'", APP_URL],
+          frameAncestors: ["'self'"],
+          formAction: ["'self'"],
+          baseUri: ["'self'"],
+          objectSrc: ["'none'"],
+        },
+      },
+    })
+  );
+
+  // Allow embed in iframes for public forms and landing pages (/f/*)
+  app.use((req, res, next) => {
+    if (req.path.startsWith("/f/")) {
+      res.removeHeader("X-Frame-Options");
+      const csp = res.getHeader("Content-Security-Policy");
+      if (typeof csp === "string") {
+        res.setHeader(
+          "Content-Security-Policy",
+          csp.replace(/frame-ancestors\s+[^;]+;?/, "frame-ancestors 'self' *;")
+        );
+      }
+    }
+    next();
+  });
+
+  app.use(
+    cors({
+      origin: ALLOWED_ORIGINS,
+      credentials: true,
+      methods: ["GET", "POST", "PATCH", "DELETE", "PUT"],
+    })
+  );
+
   const io = new Server(httpServer, {
     cors: {
-      origin: "*",
-      methods: ["GET", "POST"]
-    }
+      origin: ALLOWED_ORIGINS,
+      methods: ["GET", "POST"],
+    },
   });
 
   const roomUsers = new Map<string, Map<string, any>>();
@@ -501,39 +786,139 @@ async function startServer() {
         variationId: data.variationId,
         metadata: data.metadata ? JSON.stringify(data.metadata) : "{}",
       },
-      include: { contact: true }
+      include: { contact: true },
     });
 
-    io.to("dashboard-live").emit("live-activity", {
+    io.to(`${event.contact.organizationId}:dashboard-live`).emit("live-activity", {
       id: event.id,
       type: event.type,
-      contactName: event.contact ? `${event.contact.firstName} ${event.contact.lastName}` : 'Unknown',
+      contactName: event.contact
+        ? `${event.contact.firstName} ${event.contact.lastName}`
+        : "Unknown",
       timestamp: event.timestamp,
-      metadata: data.metadata || {}
+      metadata: data.metadata || {},
+    });
+
+    if (redisConnection) {
+      void enqueueWorkflowEvent({
+        eventId: event.id,
+        organizationId: event.contact.organizationId,
+        contactId: event.contactId,
+        eventType: event.type,
+        eventName:
+          data.metadata && typeof data.metadata.name === "string" ? data.metadata.name : undefined,
+        metadata: data.metadata && typeof data.metadata === "object" ? data.metadata : undefined,
+      }).catch((error) => {
+        logger.error({ error, eventId: event.id }, "Failed to enqueue workflow event");
+      });
+    }
+
+    // Dispatch outbound tenant webhooks with HMAC-SHA256 signature
+    void dispatchOutboundWebhooks({
+      topic: event.type,
+      organizationId: event.contact.organizationId,
+      data: {
+        eventId: event.id,
+        contactId: event.contactId,
+        campaignId: event.campaignId,
+        variationId: event.variationId,
+        metadata: data.metadata || {},
+        contact: {
+          email: event.contact?.email,
+          firstName: event.contact?.firstName,
+          lastName: event.contact?.lastName,
+          phone: event.contact?.phone,
+        },
+      },
+    }).catch((error) => {
+      logger.error({ error, eventId: event.id }, "Failed to dispatch outbound webhooks");
     });
 
     return event;
   }
 
   io.on("connection", (socket) => {
-    socket.on("join-room", ({ roomId, user }) => {
-      socket.join(roomId);
-      if (!roomUsers.has(roomId)) {
-        roomUsers.set(roomId, new Map());
+    let socketWindowStartedAt = Date.now();
+    let socketEventCount = 0;
+    const allowedCollaborationRooms = new Set(["dashboard-live", "collaboration-hub"]);
+    const scopedRoom = (roomId: unknown): string | null => {
+      if (typeof roomId !== "string" || !allowedCollaborationRooms.has(roomId)) {
+        return null;
       }
-      roomUsers.get(roomId)!.set(socket.id, user);
-      
-      io.to(roomId).emit("room-users", Array.from(roomUsers.get(roomId)!.values()));
+      return `${socket.data.organizationId}:${roomId}`;
+    };
+
+    socket.use(([event, payload], next) => {
+      const now = Date.now();
+      if (now - socketWindowStartedAt >= 10_000) {
+        socketWindowStartedAt = now;
+        socketEventCount = 0;
+      }
+      socketEventCount += 1;
+      if (socketEventCount > 200) return next(new Error("Socket rate limit exceeded"));
+      if (
+        typeof event !== "string" ||
+        event.length > 100 ||
+        Buffer.byteLength(JSON.stringify(payload ?? null), "utf8") > 16_384
+      ) {
+        return next(new Error("Invalid socket payload"));
+      }
+      next();
+    });
+
+    socket.on("join-room", ({ roomId }) => {
+      const scopedRoomId = scopedRoom(roomId);
+      if (!scopedRoomId) return;
+      socket.join(scopedRoomId);
+      if (!roomUsers.has(scopedRoomId)) {
+        roomUsers.set(scopedRoomId, new Map());
+      }
+      roomUsers.get(scopedRoomId)!.set(socket.id, socket.data.user);
+
+      io.to(scopedRoomId).emit("room-users", Array.from(roomUsers.get(scopedRoomId)!.values()));
     });
 
     socket.on("cursor-move", ({ roomId, position }) => {
-      const user = roomUsers.get(roomId)?.get(socket.id);
-      socket.to(roomId).emit("user-cursor-move", { socketId: socket.id, position, user });
+      const scopedRoomId = scopedRoom(roomId);
+      if (
+        !scopedRoomId ||
+        !socket.rooms.has(scopedRoomId) ||
+        !position ||
+        !Number.isFinite(position.x) ||
+        !Number.isFinite(position.y) ||
+        Math.abs(position.x) > 1_000_000 ||
+        Math.abs(position.y) > 1_000_000
+      ) {
+        return;
+      }
+      const user = roomUsers.get(scopedRoomId)?.get(socket.id);
+      socket.to(scopedRoomId).emit("user-cursor-move", { socketId: socket.id, position, user });
     });
 
     socket.on("activity", ({ roomId, activity }) => {
-      const user = roomUsers.get(roomId)?.get(socket.id);
-      io.to(roomId).emit("user-activity", { socketId: socket.id, activity, user });
+      const scopedRoomId = scopedRoom(roomId);
+      if (
+        !scopedRoomId ||
+        !socket.rooms.has(scopedRoomId) ||
+        typeof activity !== "string" ||
+        activity.length === 0 ||
+        activity.length > 500
+      ) {
+        return;
+      }
+      const user = roomUsers.get(scopedRoomId)?.get(socket.id);
+      io.to(scopedRoomId).emit("user-activity", { socketId: socket.id, activity, user });
+    });
+
+    socket.on("leave-room", ({ roomId }) => {
+      const scopedRoomId = scopedRoom(roomId);
+      if (!scopedRoomId || !socket.rooms.has(scopedRoomId)) return;
+      socket.leave(scopedRoomId);
+      roomUsers.get(scopedRoomId)?.delete(socket.id);
+      io.to(scopedRoomId).emit(
+        "room-users",
+        Array.from(roomUsers.get(scopedRoomId)?.values() || [])
+      );
     });
 
     socket.on("disconnecting", () => {
@@ -546,21 +931,130 @@ async function startServer() {
     });
   });
 
-  const PORT = 3000;
+  // BUG-010 FIX: Removed duplicate express.json() — single registration below at L822 with 10mb limit
 
-  app.use(express.json());
-  app.use(session({
-    secret: process.env.SESSION_SECRET || "signal-secret-key",
+  app.use((req, res, next) => {
+    const end = httpRequestDuration.startTimer({ method: req.method, route: req.path });
+    res.on("finish", () => {
+      const status = res.statusCode.toString();
+      end({ method: req.method, route: req.path, status });
+      httpRequestsTotal.inc({ method: req.method, route: req.path, status });
+    });
+    next();
+  });
+
+  // GAP-008 FIX: Restrict /metrics to localhost or internal network only
+  app.get("/metrics", async (req, res) => {
+    const remoteIp = req.ip || req.socket.remoteAddress || "";
+    const isLocalAddress =
+      remoteIp === "127.0.0.1" || remoteIp === "::1" || remoteIp === "::ffff:127.0.0.1";
+    const hasValidMetricsToken = hasValidMetricsCredential(req.headers, process.env.METRICS_TOKEN);
+    const isLocal = isLocalAddress || hasValidMetricsToken;
+
+    if (!isLocal && process.env.NODE_ENV === "production") {
+      return res.status(403).json({ error: "Metrics access restricted" });
+    }
+    await refreshOperationalMetrics(
+      redisConnection,
+      [validationQueue, campaignDeliveryQueue, workflowQueue, dataRequestQueue].filter(
+        (queue): queue is Queue => queue !== null
+      )
+    );
+    res.set("Content-Type", register.contentType);
+    res.send(await register.metrics());
+  });
+
+  app.use(requestIdMiddleware);
+
+  app.use(
+    express.json({
+      limit: "10mb",
+      verify(req, _res, buffer) {
+        (req as express.Request & { rawBody?: Buffer }).rawBody = Buffer.from(buffer);
+      },
+    })
+  );
+  app.use(express.urlencoded({ extended: false, limit: "1mb" }));
+  app.use(cookieParser());
+
+  // Initialize Template Engine
+  const templateEngine = new TemplateEngine(redisConnection || undefined);
+  if (process.env.NODE_ENV === "production" && !process.env.SESSION_SECRET) {
+    throw new Error("SESSION_SECRET must be set in production. Generate a random 64-char string.");
+  }
+  const sessionSecret =
+    process.env.SESSION_SECRET ||
+    (process.env.NODE_ENV !== "production" ? crypto.randomBytes(64).toString("hex") : undefined);
+
+  if (process.env.NODE_ENV === "production" && !redisConnection) {
+    throw new Error("REDIS_URL must be set in production for the session store.");
+  }
+
+  if (process.env.NODE_ENV === "production" && redisConnection) {
+    try {
+      await redisConnection.ping();
+    } catch (error) {
+      throw new Error("Redis session store is unavailable in production.", { cause: error });
+    }
+  }
+
+  const sessionStore = redisConnection ? new IORedisSessionStore(redisConnection) : undefined;
+
+  const cookieConfig = {
+    secure:
+      process.env.COOKIE_SECURE !== undefined
+        ? process.env.COOKIE_SECURE === "true"
+        : process.env.NODE_ENV === "production" &&
+          (process.env.APP_URL?.startsWith("https://") ?? false),
+    sameSite: "lax" as const,
+    httpOnly: true,
+    maxAge: 24 * 60 * 60 * 1000,
+  };
+
+  const sessionMiddleware = session({
+    name: "signal.sid",
+    secret: sessionSecret!,
+    store: sessionStore,
+    proxy: process.env.NODE_ENV === "production",
     resave: false,
     saveUninitialized: false,
-    cookie: { 
-      secure: process.env.NODE_ENV === "production",
-      sameSite: "none"
+    cookie: cookieConfig,
+  });
+  app.use(sessionMiddleware);
+  io.engine.use(sessionMiddleware as any);
+  io.use(async (socket, next) => {
+    try {
+      const userId = (socket.request as any).session?.passport?.user;
+      if (!userId) return next(new Error("Authentication required"));
+      const user = await prisma.user.findUnique({
+        where: { id: userId },
+        select: {
+          id: true,
+          name: true,
+          email: true,
+          role: true,
+          status: true,
+          organizationId: true,
+        },
+      });
+      if (!user || user.status !== "ACTIVE") return next(new Error("Authentication required"));
+      socket.data.user = user;
+      socket.data.organizationId = user.organizationId;
+      next();
+    } catch (error) {
+      next(error instanceof Error ? error : new Error("Socket authentication failed"));
     }
-  }));
+  });
 
   app.use(passport.initialize());
   app.use(passport.session());
+
+  app.get("/api/csrf-token", (req, res) => {
+    (req.session as any).csrfInitialized = true;
+    res.json({ csrfToken: generateToken(req, res) });
+  });
+
+  app.use(csrfProtectionMiddleware);
 
   passport.serializeUser((user: any, done) => done(null, user.id));
   passport.deserializeUser(async (id: string, done) => {
@@ -572,50 +1066,93 @@ async function startServer() {
     }
   });
 
-  // --- SOC2 Audit Logging Middleware ---
-  app.use(async (req, res, next) => {
-    const originalSend = res.send;
-    const org = await prisma.organization.findFirst();
-    
-    res.send = function (body) {
-      if (['POST', 'PUT', 'PATCH', 'DELETE'].includes(req.method) && res.statusCode < 400 && org) {
-        // Log the action asynchronously
+  // Rate limiting: general API endpoints
+  const apiRateLimitMax = Number(process.env.API_RATE_LIMIT_MAX || 200);
+  if (!Number.isInteger(apiRateLimitMax) || apiRateLimitMax < 1) {
+    throw new Error("API_RATE_LIMIT_MAX must be a positive integer");
+  }
+  const apiLimiter = rateLimit({
+    windowMs: 60 * 1000,
+    max: apiRateLimitMax,
+    skip: (req) =>
+      req.path.startsWith("/email/track/") ||
+      req.path === "/webhooks/ses" ||
+      req.path === "/webhooks/shopify" ||
+      req.path === "/health",
+    standardHeaders: true,
+    legacyHeaders: false,
+    message: { error: "Too many requests, please try again later." },
+  });
+
+  const providerEventLimiter = rateLimit({
+    windowMs: 60 * 1000,
+    max: 10_000,
+    standardHeaders: true,
+    legacyHeaders: false,
+    message: { error: "Provider event rate limit exceeded." },
+  });
+
+  // Apply rate limiters
+  app.use("/api/", apiLimiter);
+  app.use("/api/email/track", providerEventLimiter);
+  app.use("/api/webhooks/ses", providerEventLimiter);
+  app.use("/api/webhooks/shopify", providerEventLimiter);
+
+  app.use((req, res, next) => {
+    res.on("finish", () => {
+      const organizationId =
+        (req.user as any)?.organizationId || (req as any).organization?.id || null;
+      if (
+        ["POST", "PUT", "PATCH", "DELETE"].includes(req.method) &&
+        res.statusCode < 400 &&
+        organizationId
+      ) {
         const action = `${req.method} ${req.path}`;
-        const userId = req.headers['x-user-id'] as string || 'system';
-        
-        prisma.auditLog.create({
-          data: {
-            action,
-            entityType: req.path.split('/')[2] || 'unknown',
-            entityId: req.params.id || 'bulk',
-            userId,
-            organizationId: org.id,
-          }
-        }).catch(err => console.error("Audit log failed:", err));
+        const userId = (req.user as any)?.id || "system";
+        prisma.auditLog
+          .create({
+            data: {
+              action,
+              entityType: req.path.split("/")[2] || "unknown",
+              entityId: (req.params as any).id || "bulk",
+              userId,
+              organizationId,
+            },
+          })
+          .catch((err) => logger.error({ err, action }, "SOC2 audit log write failed"));
       }
-      return originalSend.call(this, body);
-    };
+    });
     next();
   });
 
   // --- Public API Gateway & Rate Limiting ---
-  const publicApiGateway = async (req: express.Request, res: express.Response, next: express.NextFunction) => {
-    const apiKeyHeader = req.headers['x-api-key'] as string;
+  const publicApiGateway = async (
+    req: express.Request,
+    res: express.Response,
+    next: express.NextFunction
+  ) => {
+    const apiKeyHeader = req.headers["x-api-key"] as string;
     if (!apiKeyHeader) return res.status(401).json({ error: "API key required" });
 
+    const keyHash = crypto.createHash("sha256").update(apiKeyHeader).digest("hex");
+
     const key = await prisma.apiKey.findUnique({
-      where: { key: apiKeyHeader },
-      include: { organization: true }
+      where: { key: keyHash },
+      include: { organization: true },
     });
 
     if (!key) return res.status(401).json({ error: "Invalid API key" });
 
     // Rate Limiting
-    const { remaining, reset } = await redisService.rateLimit(`ratelimit:api:${key.id}`, 100, 60); // 100 req/min
-    res.setHeader('X-RateLimit-Remaining', remaining);
-    res.setHeader('X-RateLimit-Reset', reset);
+    const { allowed, remaining, reset } = await redisService.rateLimit(
+      `ratelimit:api:${key.id}`,
+      100,
+      60
+    ); // 100 req/min
+    res.setHeader("X-RateLimit-Remaining", remaining);
+    res.setHeader("X-RateLimit-Reset", reset);
 
-    if (remaining === 0) {
+    if (!allowed) {
       return res.status(429).json({ error: "Rate limit exceeded" });
     }
 
@@ -624,10 +1161,12 @@ async function startServer() {
     (req as any).apiKey = key;
 
     // Update last used
-    prisma.apiKey.update({
-      where: { id: key.id },
-      data: { lastUsedAt: new Date() }
-    }).catch(() => {});
+    prisma.apiKey
+      .update({
+        where: { id: key.id },
+        data: { lastUsedAt: new Date() },
+      })
+      .catch(() => {});
 
     next();
   };
@@ -635,38 +1174,67 @@ async function startServer() {
   // --- Public API V1 Routes ---
   const publicRouter = express.Router();
   publicRouter.use(publicApiGateway);
+  const requireApiKeyScope =
+    (scope: ApiKeyScope) =>
+    (req: express.Request, res: express.Response, next: express.NextFunction) => {
+      const key = (req as any).apiKey as { scopes: string } | undefined;
+      if (!key || !hasApiKeyScope(key.scopes, scope)) {
+        return res.status(403).json({ error: "API key scope is insufficient" });
+      }
+      next();
+    };
 
-  publicRouter.get("/contacts", async (req, res) => {
+  publicRouter.get("/contacts", requireApiKeyScope("contacts:read"), async (req, res) => {
     const org = (req as any).organization;
     const cacheKey = `api:contacts:${org.id}`;
-    
+
     const cached = await redisService.get<any[]>(cacheKey);
     if (cached) return res.json(cached);
 
-    const contacts = await prisma.contact.findMany({ where: { organizationId: org.id } });
+    const contacts = await prisma.contact.findMany({
+      where: { organizationId: org.id },
+      select: {
+        id: true,
+        email: true,
+        firstName: true,
+        lastName: true,
+        status: true,
+        emailConsent: true,
+        createdAt: true,
+        updatedAt: true,
+      },
+    });
     await redisService.set(cacheKey, contacts, 300); // Cache for 5 mins
     res.json(contacts);
   });
 
-  publicRouter.post("/contacts", async (req, res) => {
+  publicRouter.post("/contacts", requireApiKeyScope("contacts:write"), async (req, res) => {
     const org = (req as any).organization;
     const { email, firstName, lastName } = req.body;
     const contact = await prisma.contact.upsert({
       where: { email_organizationId: { email, organizationId: org.id } },
       update: { firstName, lastName },
-      create: { email, firstName, lastName, organizationId: org.id }
+      create: {
+        email,
+        firstName,
+        lastName,
+        organizationId: org.id,
+        emailConsent: false,
+        status: "UNSUBSCRIBED",
+        preferenceToken: crypto.randomBytes(32).toString("base64url"),
+      },
     });
-    
+
     // Invalidate cache
     await redisService.del(`api:contacts:${org.id}`);
-    
+
     res.json(contact);
   });
 
-  publicRouter.get("/campaigns", async (req, res) => {
+  publicRouter.get("/campaigns", requireApiKeyScope("campaigns:read"), async (req, res) => {
     const org = (req as any).organization;
     const cacheKey = `api:campaigns:${org.id}`;
-    
+
     const cached = await redisService.get<any[]>(cacheKey);
     if (cached) return res.json(cached);
 
@@ -675,13 +1243,13 @@ async function startServer() {
     res.json(campaigns);
   });
 
-  publicRouter.get("/templates", async (req, res) => {
+  publicRouter.get("/templates", requireApiKeyScope("templates:read"), async (req, res) => {
     const org = (req as any).organization;
     const templates = await prisma.template.findMany({ where: { organizationId: org.id } });
     res.json(templates);
   });
 
-  publicRouter.get("/segments", async (req, res) => {
+  publicRouter.get("/segments", requireApiKeyScope("segments:read"), async (req, res) => {
     const org = (req as any).organization;
     const segments = await prisma.segment.findMany({ where: { organizationId: org.id } });
     res.json(segments);
@@ -699,9 +1267,9 @@ async function startServer() {
       ],
       authentication: {
         header: "x-api-key",
-        type: "Bearer-like API Key"
+        type: "Bearer-like API Key",
       },
-      rateLimit: "100 requests per minute"
+      rateLimit: "100 requests per minute",
     });
   });
 
@@ -716,9 +1284,9 @@ async function startServer() {
           <meta name="viewport" content="width=device-width, initial-scale=1.0">
           <title>SIGNAL Public API Documentation</title>
           <script src="https://cdn.tailwindcss.com"></script>
-          <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;600;800&family=JetBrains+Mono&family=Playfair+Display:ital,wght@0,900;1,900&display=swap" rel="stylesheet">
+          <link href="https://fonts.googleapis.com/css2?family=Libre+Franklin:wght@400;600;800&family=JetBrains+Mono&family=Playfair+Display:ital,wght@0,900;1,900&display=swap" rel="stylesheet">
           <style>
-              body { font-family: 'Inter', sans-serif; background-color: #F5F2EC; color: #1A1814; }
+              body { font-family: 'Libre Franklin', sans-serif; background-color: #F5F2EC; color: #1A1814; }
               .serif { font-family: 'Playfair Display', serif; }
               .mono { font-family: 'JetBrains Mono', monospace; }
               .endpoint-card { background: white; border: 1px solid #1A1814; }
@@ -733,7 +1301,7 @@ async function startServer() {
           </header>
 
           <section class="mb-16">
-              <h2 class="text-sm font-extrabold uppercase tracking-widest mb-8 border-l-4 border-[#8B1A1A] pl-4">Authentication</h2>
+              <h2 class="text-sm font-extrabold uppercase tracking-widest mb-8 border-b border-[#8B1A1A]/20 pb-2">Authentication</h2>
               <div class="endpoint-card p-8">
                   <p class="mb-4">All requests must include your API key in the <code class="mono bg-black/5 px-2 py-1 rounded text-sm">x-api-key</code> header.</p>
                   <div class="mono bg-[#1A1814] text-white p-4 text-sm overflow-x-auto">
@@ -743,7 +1311,7 @@ async function startServer() {
           </section>
 
           <section class="mb-16">
-              <h2 class="text-sm font-extrabold uppercase tracking-widest mb-8 border-l-4 border-[#8B1A1A] pl-4">Endpoints</h2>
+              <h2 class="text-sm font-extrabold uppercase tracking-widest mb-8 border-b border-[#8B1A1A]/20 pb-2">Endpoints</h2>
               <div class="space-y-6">
                   <!-- Contacts -->
                   <div class="endpoint-card p-8">
@@ -794,2044 +1362,365 @@ async function startServer() {
     `);
   });
 
-  // --- API Keys Management ---
-  app.get("/api/keys", async (req, res) => {
-    const org = await prisma.organization.findFirst();
-    const keys = await prisma.apiKey.findMany({ where: { organizationId: org?.id } });
-    res.json(keys);
-  });
-
-  app.post("/api/keys", async (req, res) => {
-    const { name, scopes } = req.body;
-    const org = await prisma.organization.findFirst();
-    if (!org) return res.status(404).json({ error: "Org not found" });
-
-    const key = await prisma.apiKey.create({
-      data: {
-        name,
-        key: `sig_${Math.random().toString(36).substring(2)}${Math.random().toString(36).substring(2)}`,
-        scopes: JSON.stringify(scopes || []),
-        organizationId: org.id
-      }
-    });
-    res.json(key);
-  });
-
-  app.delete("/api/keys/:id", async (req, res) => {
-    await prisma.apiKey.delete({ where: { id: req.params.id } });
-    res.json({ success: true });
-  });
-
-  // --- API Routes ---
-
-  // Team Management
-  app.get("/api/team", async (req, res) => {
-    const org = await prisma.organization.findFirst();
-    if (!org) return res.status(404).json({ error: "Org not found" });
-
-    const users = await prisma.user.findMany({
-      where: { organizationId: org.id },
-      include: { customRole: true },
-      orderBy: { createdAt: "asc" },
-    });
-    res.json(users);
-  });
-
-  app.post("/api/team/invite", async (req, res) => {
-    const org = await prisma.organization.findFirst();
-    if (!org) return res.status(404).json({ error: "Org not found" });
-
-    const { email, name, role } = req.body;
-    
-    try {
-      const newUser = await prisma.user.create({
-        data: {
-          email,
-          name,
-          role: role || "VIEWER",
-          status: "PENDING",
-          organizationId: org.id,
-        },
-      });
-      console.log(`[EMAIL SIMULATION] Invitation sent to ${email}`);
-      res.json(newUser);
-    } catch (e) {
-      res.status(400).json({ error: "User already exists or invalid data" });
-    }
-  });
-
-  app.post("/api/team/:id/activate", async (req, res) => {
-    const { id } = req.params;
-    try {
-      const user = await prisma.user.update({
-        where: { id },
-        data: { status: "ACTIVE" }
-      });
-      res.json(user);
-    } catch (e) {
-      res.status(400).json({ error: "Failed to activate user" });
-    }
-  });
-
-  app.patch("/api/team/:id", async (req, res) => {
-    const { id } = req.params;
-    const { role, name } = req.body;
-
-    try {
-      const updatedUser = await prisma.user.update({
-        where: { id },
-        data: { role, name },
-      });
-      res.json(updatedUser);
-    } catch (e) {
-      res.status(400).json({ error: "Failed to update user" });
-    }
-  });
-
-  app.delete("/api/team/:id", async (req, res) => {
-    const { id } = req.params;
-    
-    // Prevent deleting the last owner (simplified check)
-    const userToDelete = await prisma.user.findUnique({ where: { id } });
-    if (userToDelete?.role === "OWNER") {
-      const ownerCount = await prisma.user.count({ 
-        where: { organizationId: userToDelete.organizationId, role: "OWNER" } 
-      });
-      if (ownerCount <= 1) {
-        return res.status(400).json({ error: "Cannot delete the last owner" });
-      }
-    }
-
-    try {
-      await prisma.user.delete({ where: { id } });
-      res.json({ success: true });
-    } catch (e) {
-      res.status(400).json({ error: "Failed to delete user" });
-    }
-  });
-
-  // Auth / Org Context (Simulated for now)
-  app.get("/api/me", async (req, res) => {
-    const user = await prisma.user.findFirst({
-      include: { organization: true },
-    });
-    res.json(user);
-  });
-
-  // Email Validation API
-  app.post("/api/validate", async (req, res) => {
-    const { email } = req.body;
-    const org = await prisma.organization.findFirst();
-    if (!org) return res.status(404).json({ error: "Org not found" });
-
-    // Rate limiting: 10 req/sec
-    const rateLimitKey = `rl:validate:${org.id}`;
-    const { remaining, reset } = await redisService.rateLimit(rateLimitKey, 10, 1);
-    
-    res.set('X-RateLimit-Remaining', remaining.toString());
-    res.set('X-RateLimit-Reset', reset.toString());
-
-    if (remaining === 0) {
-      return res.status(429).json({ error: "Too many requests" });
-    }
-
-    try {
-      const result = await ValidationEngine.validate(email);
-      
-      await prisma.validationLog.create({
-        data: {
-          email,
-          status: result.status,
-          score: result.score,
-          confidence: result.confidence,
-          details: JSON.stringify(result.details),
-          organizationId: org.id
-        }
-      });
-
-      res.json(result);
-    } catch (e) {
-      res.status(500).json({ error: "Validation failed" });
-    }
-  });
-
-  app.post("/api/validate-bulk", upload.single('file'), async (req, res) => {
-    const org = await prisma.organization.findFirst();
-    if (!org) return res.status(404).json({ error: "Org not found" });
-    if (!req.file) return res.status(400).json({ error: "No file uploaded" });
-
-    try {
-      const content = req.file.buffer.toString();
-      const records = parse(content, { columns: true, skip_empty_lines: true });
-      const emails = records.map((r: any) => r.email).filter(Boolean);
-
-      const job = await prisma.bulkValidationJob.create({
-        data: {
-          name: req.file.originalname,
-          organizationId: org.id,
-          totalCount: emails.length
-        }
-      });
-
-      if (validationQueue) {
-        await validationQueue.add('process-bulk', { jobId: job.id, emails });
-      } else {
-        return res.status(503).json({ error: "Bulk validation service is unavailable (Redis not configured)" });
-      }
-
-      res.json({ jobId: job.id, message: "Bulk validation started" });
-    } catch (e) {
-      res.status(500).json({ error: "Failed to start bulk validation" });
-    }
-  });
-
-  app.get("/api/validate-bulk/:id", async (req, res) => {
-    const job = await prisma.bulkValidationJob.findUnique({
-      where: { id: req.params.id },
-      include: { results: { take: 100 } } // Limit results for status check
-    });
-    res.json(job);
-  });
-
-  app.get("/api/validation-logs", async (req, res) => {
-    const org = await prisma.organization.findFirst();
-    const logs = await prisma.validationLog.findMany({
-      where: { organizationId: org?.id },
-      orderBy: { createdAt: 'desc' },
-      take: 100
-    });
-    res.json(logs);
-  });
-  app.get("/api/stats/summary", async (req, res) => {
-    const org = await prisma.organization.findFirst();
-    if (!org) return res.status(404).json({ error: "Org not found" });
-
-    const totalSubscribers = await prisma.contact.count({ where: { organizationId: org.id } });
-    const totalCampaigns = await prisma.campaign.count({ where: { organizationId: org.id } });
-    const totalSent = await prisma.event.count({ where: { type: "SENT", contact: { organizationId: org.id } } });
-    const totalOpens = await prisma.event.count({ where: { type: "OPEN", contact: { organizationId: org.id } } });
-
-    res.json({ totalSubscribers, totalCampaigns, totalSent, totalOpens });
-  });
-
-  // Contacts
-  app.get("/api/contacts", async (req, res) => {
-    const org = await prisma.organization.findFirst();
-    const contacts = await prisma.contact.findMany({
-      where: { organizationId: org?.id },
-      include: { tags: true },
-      orderBy: { createdAt: "desc" },
-    });
-    res.json(contacts);
-  });
-
-  app.post("/api/contacts", async (req, res) => {
-    const org = await prisma.organization.findFirst();
-    const { email, firstName, lastName, tags } = req.body;
-
-    // Server-side email validation
-    const emailRegex = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
-    if (!emailRegex.test(email)) {
-      return res.status(400).json({ error: "Invalid email format" });
-    }
-
-    try {
-      const contact = await prisma.contact.create({
-        data: {
-          email,
-          firstName,
-          lastName,
-          organizationId: org!.id,
-          tags: {
-            connectOrCreate: (tags || "").split(",").map((t: string) => ({
-              where: { name: t.trim() },
-              create: { name: t.trim() },
-            })),
+  app.get("/api/v1/openapi.json", (req, res) => {
+    res.json({
+      openapi: "3.0.0",
+      info: {
+        title: "SIGNAL Public API",
+        version: "v1",
+        description:
+          "SIGNAL's enterprise-grade marketing automation API. Secure, scalable, and built for developers.",
+      },
+      servers: [{ url: "/api/v1", description: "Public API v1" }],
+      security: [{ ApiKeyAuth: [] }],
+      paths: {
+        "/contacts": {
+          get: {
+            summary: "List contacts",
+            description: "Retrieve a list of all contacts in your organization.",
+            security: [{ ApiKeyAuth: [] }],
+            responses: {
+              "200": {
+                description: "Array of contacts",
+                content: {
+                  "application/json": {
+                    schema: { type: "array", items: { $ref: "#/components/schemas/Contact" } },
+                  },
+                },
+              },
+            },
+          },
+          post: {
+            summary: "Create or update a contact",
+            description:
+              "Upsert a contact by email. If the email exists, fields are updated; otherwise a new contact is created.",
+            security: [{ ApiKeyAuth: [] }],
+            requestBody: {
+              required: true,
+              content: {
+                "application/json": {
+                  schema: { $ref: "#/components/schemas/ContactCreate" },
+                },
+              },
+            },
+            responses: {
+              "200": {
+                description: "Created or updated contact",
+                content: {
+                  "application/json": { schema: { $ref: "#/components/schemas/Contact" } },
+                },
+              },
+            },
           },
         },
-      });
-      res.json(contact);
-    } catch (e) {
-      res.status(400).json({ error: "Contact already exists" });
-    }
+        "/campaigns": {
+          get: {
+            summary: "List campaigns",
+            description: "List all email campaigns and their current status.",
+            security: [{ ApiKeyAuth: [] }],
+            responses: {
+              "200": {
+                description: "Array of campaigns",
+                content: {
+                  "application/json": {
+                    schema: { type: "array", items: { $ref: "#/components/schemas/Campaign" } },
+                  },
+                },
+              },
+            },
+          },
+        },
+        "/templates": {
+          get: {
+            summary: "List templates",
+            description: "Retrieve your MJML email templates.",
+            security: [{ ApiKeyAuth: [] }],
+            responses: {
+              "200": {
+                description: "Array of templates",
+                content: {
+                  "application/json": {
+                    schema: { type: "array", items: { $ref: "#/components/schemas/Template" } },
+                  },
+                },
+              },
+            },
+          },
+        },
+        "/segments": {
+          get: {
+            summary: "List segments",
+            description: "List audience segments.",
+            security: [{ ApiKeyAuth: [] }],
+            responses: {
+              "200": {
+                description: "Array of segments",
+                content: {
+                  "application/json": {
+                    schema: { type: "array", items: { $ref: "#/components/schemas/Segment" } },
+                  },
+                },
+              },
+            },
+          },
+        },
+      },
+      components: {
+        securitySchemes: {
+          ApiKeyAuth: {
+            type: "apiKey",
+            in: "header",
+            name: "x-api-key",
+            description:
+              "API key for authenticating requests. Contact your SIGNAL administrator to obtain a key.",
+          },
+        },
+        schemas: {
+          Contact: {
+            type: "object",
+            properties: {
+              id: { type: "string", format: "uuid" },
+              email: { type: "string", format: "email" },
+              firstName: { type: "string" },
+              lastName: { type: "string" },
+              createdAt: { type: "string", format: "date-time" },
+              updatedAt: { type: "string", format: "date-time" },
+            },
+          },
+          ContactCreate: {
+            type: "object",
+            required: ["email"],
+            properties: {
+              email: { type: "string", format: "email" },
+              firstName: { type: "string" },
+              lastName: { type: "string" },
+            },
+          },
+          Campaign: {
+            type: "object",
+            properties: {
+              id: { type: "string", format: "uuid" },
+              name: { type: "string" },
+              subject: { type: "string" },
+              status: { type: "string", enum: ["DRAFT", "SCHEDULED", "SENDING", "SENT"] },
+              channel: { type: "string", enum: ["EMAIL", "SMS", "IN_APP"] },
+              createdAt: { type: "string", format: "date-time" },
+            },
+          },
+          Template: {
+            type: "object",
+            properties: {
+              id: { type: "string", format: "uuid" },
+              name: { type: "string" },
+              category: { type: "string" },
+              createdAt: { type: "string", format: "date-time" },
+            },
+          },
+          Segment: {
+            type: "object",
+            properties: {
+              id: { type: "string", format: "uuid" },
+              name: { type: "string" },
+              contactCount: { type: "integer" },
+              createdAt: { type: "string", format: "date-time" },
+            },
+          },
+        },
+      },
+    });
   });
 
-  app.post("/api/contacts/bulk", async (req, res) => {
-    const org = await prisma.organization.findFirst();
-    if (!org) return res.status(404).json({ error: "Organization not found" });
-    
-    const { contacts } = req.body;
-    if (!Array.isArray(contacts)) {
-      return res.status(400).json({ error: "Invalid payload" });
+  // Health check endpoints
+  const healthHandler = async (_req: express.Request, res: express.Response) => {
+    const checks: Record<string, string> = {};
+    let overall: "healthy" | "degraded" | "unhealthy" = "healthy";
+
+    try {
+      await prisma.$queryRaw`SELECT 1`;
+      checks.database = "ok";
+    } catch {
+      checks.database = "error";
+      overall = "unhealthy";
     }
 
-    const emailRegex = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
-    let imported = 0;
-    let failed = 0;
-
-    for (const c of contacts) {
-      if (!c.email || !emailRegex.test(c.email)) {
-        failed++;
-        continue;
-      }
+    if (redisConnection) {
       try {
-        await prisma.contact.upsert({
-          where: { email_organizationId: { email: c.email, organizationId: org.id } },
-          update: {
-            firstName: c.firstName || undefined,
-            lastName: c.lastName || undefined,
-            tags: c.tags ? {
-              connectOrCreate: c.tags.split(",").map((t: string) => ({
-                where: { name: t.trim() },
-                create: { name: t.trim() },
-              })).filter((t: any) => t.where.name),
-            } : undefined,
-          },
-          create: {
-            email: c.email,
-            firstName: c.firstName || "",
-            lastName: c.lastName || "",
-            organizationId: org.id,
-            tags: c.tags ? {
-              connectOrCreate: c.tags.split(",").map((t: string) => ({
-                where: { name: t.trim() },
-                create: { name: t.trim() },
-              })).filter((t: any) => t.where.name),
-            } : undefined,
-          },
-        });
-        imported++;
-      } catch (e) {
-        failed++;
+        await redisConnection.ping();
+        checks.redis = "ok";
+      } catch {
+        checks.redis = "error";
+        overall = process.env.NODE_ENV === "production" ? "unhealthy" : "degraded";
       }
+    } else {
+      checks.redis = "not_configured";
+      if (process.env.NODE_ENV === "production") overall = "unhealthy";
     }
 
-    res.json({ imported, failed });
-  });
-
-  // Campaigns
-  app.get("/api/campaigns", async (req, res) => {
-    const org = await prisma.organization.findFirst();
-    const campaigns = await prisma.campaign.findMany({
-      where: { organizationId: org?.id },
-      include: { template: true },
-      orderBy: { createdAt: "desc" },
+    res.status(overall === "healthy" ? 200 : overall === "degraded" ? 200 : 503).json({
+      status: overall,
+      checks,
+      uptime: process.uptime(),
+      timestamp: new Date().toISOString(),
     });
-    res.json(campaigns);
-  });
+  };
 
-  app.post("/api/campaigns", async (req, res) => {
-    const org = await prisma.organization.findFirst();
-    const { 
-      name, subject, previewText, fromName, fromEmail, content, type, scheduledAt, timezone, perUserTimezone,
-      subjectB, contentB, testPercentage, testDuration, winnerCriteria, channel
-    } = req.body;
-    const campaign = await prisma.campaign.create({
-      data: {
-        name,
-        subject,
-        previewText,
-        fromName,
-        fromEmail,
-        content,
-        type,
-        channel: channel || "EMAIL",
-        subjectB,
-        contentB,
-        testPercentage: testPercentage ? parseInt(testPercentage) : undefined,
-        testDuration: testDuration ? parseInt(testDuration) : undefined,
-        winnerCriteria,
-        timezone: timezone || "UTC",
-        perUserTimezone: perUserTimezone || false,
-        scheduledAt: scheduledAt ? new Date(scheduledAt) : null,
-        status: scheduledAt ? "SCHEDULED" : "DRAFT",
-        organizationId: org!.id,
-      },
-    });
-    res.json(campaign);
-  });
-
-  app.patch("/api/campaigns/:id/status", async (req, res) => {
-    const { status } = req.body;
-    const campaign = await prisma.campaign.update({
-      where: { id: req.params.id },
-      data: { 
-        status,
-        sentAt: status === "SENT" ? new Date() : undefined
-      },
-    });
-
-    if (status === "SENT" && campaign.channel === "IN_APP") {
-      const contacts = await prisma.contact.findMany({
-        where: { organizationId: campaign.organizationId }
-      });
-      for (const contact of contacts) {
-        await prisma.notification.create({
-          data: {
-            title: campaign.name,
-            body: campaign.subject,
-            contactId: contact.id,
-            campaignId: campaign.id
-          }
-        });
-      }
-    }
-
-    if (status === "SENT" && campaign.channel === "SMS") {
-      console.log(`[SMS Gateway] Sending SMS campaign "${campaign.name}" to organization contacts.`);
-      // In a real app, we would call Twilio or similar here
-    }
-
-    res.json(campaign);
-  });
-
-  app.delete("/api/campaigns/:id", async (req, res) => {
-    await prisma.campaign.delete({
-      where: { id: req.params.id },
-    });
-    res.json({ success: true });
-  });
-
-  app.get("/api/campaigns/:id/analytics", async (req, res) => {
-    const campaign = await prisma.campaign.findUnique({
-      where: { id: req.params.id },
-    });
-    if (!campaign) return res.status(404).json({ error: "Campaign not found" });
-
-    // Mocking analytics data for the editorial feel
-    const sent = 1240;
-    const opened = Math.floor(sent * 0.248);
-    const clicked = Math.floor(opened * 0.12);
-    const unsubscribed = Math.floor(sent * 0.0012);
-    const bounced = Math.floor(sent * 0.002);
-    const conversions = Math.floor(clicked * 0.05);
-
-    const timeSeries = [
-      { timestamp: "08:00", opens: 120, clicks: 12 },
-      { timestamp: "10:00", opens: 450, clicks: 45 },
-      { timestamp: "12:00", opens: 890, clicks: 89 },
-      { timestamp: "14:00", opens: 1100, clicks: 110 },
-      { timestamp: "16:00", opens: 1240, clicks: 124 },
-    ];
-
-    const deviceData = [
-      { name: "Mobile", value: 65 },
-      { name: "Desktop", value: 30 },
-      { name: "Tablet", value: 5 },
-    ];
-
+  app.get("/health", healthHandler);
+  app.get("/api/health", healthHandler);
+  app.get("/live", (_req, res) => {
     res.json({
-      campaign,
-      stats: { sent, opened, clicked, unsubscribed, bounced, conversions },
-      timeSeries,
-      deviceData,
+      status: "alive",
+      uptime: process.uptime(),
+      timestamp: new Date().toISOString(),
     });
   });
 
-  // Templates
-  app.get("/api/templates", async (req, res) => {
-    const org = await prisma.organization.findFirst();
-    const templates = await prisma.template.findMany({
-      where: { organizationId: org?.id },
-      orderBy: { createdAt: "desc" },
-    });
-    res.json(templates);
+  // --- Route Modules ---
+
+  const ctx: RouteContext = {
+    templateEngine,
+    validationQueue: validationQueue as any,
+    io: io as any,
+    roomUsers,
+    createEventAndBroadcast,
+    refreshSegment,
+    publicApiGateway: publicRouter,
+  };
+
+  app.use(registerCampaignRoutes(ctx));
+  app.use(registerContactRoutes(ctx));
+  app.use(registerTemplateRoutes(ctx));
+  app.use(registerFlowRoutes(ctx));
+  app.use(registerAuthRoutes(ctx));
+  app.use(registerAdminRoutes(ctx));
+  app.use(registerValidationRoutes(ctx));
+  app.use(registerAiRoutes(ctx));
+  app.use(registerComplianceRoutes(ctx));
+  app.use(registerIntegrationRoutes(ctx));
+  app.use(registerAssetRoutes(ctx));
+  app.use(registerFormRoutes(ctx));
+  app.use(registerGrowthRoutes(ctx));
+  app.use(registerEmailRoutes(ctx));
+
+  app.use("/api", (_req, res) => {
+    res.status(404).json({ error: "API endpoint not found", code: "NOT_FOUND" });
   });
 
-  app.post("/api/templates", async (req, res) => {
-    const org = await prisma.organization.findFirst();
-    const { name, content, category } = req.body;
-    const template = await prisma.template.create({
-      data: {
-        name,
-        content,
-        category,
-        organizationId: org!.id,
-      },
-    });
-    res.json(template);
-  });
-
-  app.delete("/api/templates/:id", async (req, res) => {
-    await prisma.template.delete({
-      where: { id: req.params.id },
-    });
-    res.json({ success: true });
-  });
-
-  // Segments
-  app.get("/api/segments", async (req, res) => {
-    const org = await prisma.organization.findFirst();
-    const segments = await prisma.segment.findMany({
-      where: { organizationId: org?.id },
-      orderBy: { createdAt: "desc" },
-    });
-    res.json(segments);
-  });
-
-  async function refreshSegment(segmentId: string) {
-    const segment = await prisma.segment.findUnique({ where: { id: segmentId } });
-    if (!segment) return;
-
-    try {
-      const rules = JSON.parse(segment.rules);
-      const where: any = { organizationId: segment.organizationId };
-
-      for (const rule of rules) {
-        if (rule.type === 'event') {
-          const timeframeMs = parseTimeframe(rule.timeframe);
-          where.behavioralEvents = {
-            some: {
-              name: rule.eventName,
-              timestamp: {
-                gte: new Date(Date.now() - timeframeMs)
-              }
-            }
-          };
-        } else if (rule.type === 'attribute') {
-          if (rule.field === 'status') {
-            where.status = rule.value;
-          }
-        }
-      }
-
-      // Fetch only IDs to be efficient
-      const matchedContacts = await prisma.contact.findMany({
-        where,
-        select: { id: true }
-      });
-
-      await prisma.segment.update({
-        where: { id: segment.id },
-        data: {
-          contactCount: matchedContacts.length,
-          contacts: {
-            set: matchedContacts.map(c => ({ id: c.id }))
-          }
-        }
-      });
-      
-      console.log(`Segment ${segment.id} refreshed: ${matchedContacts.length} contacts.`);
-    } catch (err) {
-      console.error(`Error refreshing segment ${segment.id}:`, err);
-    }
-  }
-
-  app.post("/api/segments", async (req, res) => {
-    const org = await prisma.organization.findFirst();
-    const { name, rules } = req.body;
-    const segment = await prisma.segment.create({
-      data: {
-        name,
-        rules: JSON.stringify(rules),
-        organizationId: org!.id,
-      },
-    });
-    
-    // Initial refresh
-    await refreshSegment(segment.id);
-    
-    const updatedSegment = await prisma.segment.findUnique({ where: { id: segment.id } });
-    res.json(updatedSegment);
-  });
-
-  app.get("/api/segments/:id/contacts", async (req, res) => {
-    const segment = await prisma.segment.findUnique({
-      where: { id: req.params.id },
-      include: {
-        contacts: {
-          include: { tags: true }
-        }
-      }
-    });
-    if (!segment) return res.status(404).json({ error: "Segment not found" });
-
-    res.json(segment.contacts);
-  });
-
-  app.get("/api/segments/:id/count", async (req, res) => {
-    const segment = await prisma.segment.findUnique({
-      where: { id: req.params.id },
-      select: { contactCount: true }
-    });
-    if (!segment) return res.status(404).json({ error: "Segment not found" });
-
-    res.json({ count: segment.contactCount });
-  });
-
-  app.delete("/api/segments/:id", async (req, res) => {
-    await prisma.segment.delete({
-      where: { id: req.params.id },
-    });
-    res.json({ success: true });
-  });
-
-  // Behavioral Events
-  app.post("/api/events/behavioral", async (req, res) => {
-    const org = await prisma.organization.findFirst();
-    const { email, name, properties } = req.body;
-
-    let contact = await prisma.contact.findUnique({
-      where: { email_organizationId: { email, organizationId: org!.id } }
-    });
-
-    if (!contact) {
-      contact = await prisma.contact.create({
-        data: {
-          email,
-          organizationId: org!.id,
-          source: "BEHAVIORAL_EVENT"
-        }
-      });
-    }
-
-    const event = await prisma.behavioralEvent.create({
-      data: {
-        name,
-        properties: JSON.stringify(properties || {}),
-        contactId: contact.id,
-        organizationId: org!.id
-      },
-      include: { contact: true }
-    });
-
-    // Broadcast to live dashboard
-    io.to("dashboard-live").emit("live-activity", {
-      id: event.id,
-      type: "BEHAVIORAL",
-      eventName: event.name,
-      contactName: event.contact ? `${event.contact.firstName} ${event.contact.lastName}` : 'Unknown',
-      timestamp: event.timestamp,
-      properties: properties || {}
-    });
-
-    res.json(event);
-  });
-
-  function parseTimeframe(timeframe: string): number {
-    const num = parseInt(timeframe);
-    const unit = timeframe.slice(-1);
-    switch (unit) {
-      case 'h': return num * 60 * 60 * 1000;
-      case 'd': return num * 24 * 60 * 60 * 1000;
-      case 'w': return num * 7 * 24 * 60 * 60 * 1000;
-      case 'm': return num * 30 * 24 * 60 * 60 * 1000; // rough month
-      default: return num * 24 * 60 * 60 * 1000;
-    }
-  }
-
-  // Custom Fields
-  app.get("/api/custom-fields", async (req, res) => {
-    const org = await prisma.organization.findFirst();
-    const fields = await prisma.customFieldDefinition.findMany({
-      where: { organizationId: org?.id },
-      orderBy: { name: "asc" },
-    });
-    res.json(fields);
-  });
-
-  app.post("/api/custom-fields", async (req, res) => {
-    const org = await prisma.organization.findFirst();
-    const { name, key, type } = req.body;
-    const field = await prisma.customFieldDefinition.create({
-      data: {
-        name,
-        key,
-        type,
-        organizationId: org!.id,
-      },
-    });
-    res.json(field);
-  });
-
-  app.delete("/api/custom-fields/:id", async (req, res) => {
-    await prisma.customFieldDefinition.delete({
-      where: { id: req.params.id },
-    });
-    res.json({ success: true });
-  });
-
-  // Personalization Preview
-  app.post("/api/personalize/preview", async (req, res) => {
-    const { content, contactId } = req.body;
-    const contact = await prisma.contact.findUnique({
-      where: { id: contactId },
-    });
-
-    if (!contact) return res.status(404).json({ error: "Contact not found" });
-
-    let personalized = content;
-    const fields = {
-      first_name: contact.firstName || "",
-      last_name: contact.lastName || "",
-      email: contact.email,
-      ...JSON.parse(contact.customFields),
-    };
-
-    // Simple token replacement
-    Object.entries(fields).forEach(([key, value]) => {
-      const regex = new RegExp(`{{${key}}}`, "g");
-      personalized = personalized.replace(regex, String(value));
-    });
-
-    // Simple conditional blocks: {{#if key}} ... {{/if}}
-    const ifRegex = /{{#if (\w+)}}([\s\S]*?){{\/if}}/g;
-    personalized = personalized.replace(ifRegex, (match, key, body) => {
-      return fields[key] ? body : "";
-    });
-
-    res.json({ content: personalized });
-  });
-
-  // Flows (Automations)
-  app.get("/api/flows", async (req, res) => {
-    const org = await prisma.organization.findFirst();
-    const flows = await prisma.flow.findMany({
-      where: { organizationId: org?.id },
-      orderBy: { updatedAt: "desc" },
-    });
-    res.json(flows);
-  });
-
-  app.post("/api/flows", async (req, res) => {
-    const org = await prisma.organization.findFirst();
-    const { name, nodes, edges, status, scheduledAt } = req.body;
-    const flow = await prisma.flow.create({
-      data: {
-        name,
-        nodes: nodes ? (typeof nodes === 'string' ? nodes : JSON.stringify(nodes)) : "[]",
-        edges: edges ? (typeof edges === 'string' ? edges : JSON.stringify(edges)) : "[]",
-        status: status || "DRAFT",
-        scheduledAt: scheduledAt ? new Date(scheduledAt) : null,
-        organizationId: org!.id,
-      },
-    });
-    res.json(flow);
-  });
-
-  app.get("/api/flows/:id", async (req, res) => {
-    const flow = await prisma.flow.findUnique({
-      where: { id: req.params.id },
-    });
-    res.json(flow);
-  });
-
-  app.patch("/api/flows/:id", async (req, res) => {
-    const { name, nodes, edges, status, scheduledAt } = req.body;
-    const flow = await prisma.flow.update({
-      where: { id: req.params.id },
-      data: {
-        ...(name && { name }),
-        ...(nodes && { nodes: typeof nodes === 'string' ? nodes : JSON.stringify(nodes) }),
-        ...(edges && { edges: typeof edges === 'string' ? edges : JSON.stringify(edges) }),
-        ...(status && { status }),
-        ...(scheduledAt !== undefined && { scheduledAt: scheduledAt ? new Date(scheduledAt) : null }),
-      },
-    });
-    res.json(flow);
-  });
-
-  app.delete("/api/flows/:id", async (req, res) => {
-    await prisma.flow.delete({
-      where: { id: req.params.id },
-    });
-    res.json({ success: true });
-  });
-
-  app.get("/api/flows/:id/analytics", async (req, res) => {
-    const flow = await prisma.flow.findUnique({ where: { id: req.params.id } });
-    if (!flow) return res.status(404).json({ error: "Flow not found" });
-
-    const nodes = JSON.parse(flow.nodes || "[]");
-    const analytics: any = {};
-
-    nodes.forEach((node: any) => {
-      // Mock stats based on node type
-      if (node.data.type === 'Trigger') {
-        analytics[node.id] = {
-          entries: Math.floor(Math.random() * 5000) + 1000,
-        };
-      } else if (node.data.type === 'Action' && node.data.label === 'Send Email') {
-        const sent = Math.floor(Math.random() * 4000) + 500;
-        const opened = Math.floor(sent * (0.2 + Math.random() * 0.3));
-        const clicked = Math.floor(opened * (0.1 + Math.random() * 0.2));
-        analytics[node.id] = {
-          sent,
-          opened,
-          clicked,
-          openRate: (opened / sent * 100).toFixed(1) + '%',
-          clickRate: (clicked / opened * 100).toFixed(1) + '%',
-        };
-      } else if (node.data.type === 'Logic') {
-        const total = Math.floor(Math.random() * 3000) + 500;
-        const truePath = Math.floor(total * (0.4 + Math.random() * 0.4));
-        analytics[node.id] = {
-          total,
-          truePath,
-          falsePath: total - truePath,
-        };
-      } else {
-        analytics[node.id] = {
-          processed: Math.floor(Math.random() * 2000) + 100,
-        };
-      }
-    });
-
-    res.json(analytics);
-  });
-
-  // Workflow Templates
-  app.get("/api/workflow-templates", async (req, res) => {
-    const templates = await prisma.workflowTemplate.findMany({
-      orderBy: { category: "asc" },
-    });
-    res.json(templates);
-  });
-
-  app.post("/api/flows/from-template", async (req, res) => {
-    const org = await prisma.organization.findFirst();
-    const { templateId } = req.body;
-    const template = await prisma.workflowTemplate.findUnique({ where: { id: templateId } });
-    if (!template) return res.status(404).json({ error: "Template not found" });
-
-    const flow = await prisma.flow.create({
-      data: {
-        name: `${template.name} (Copy)`,
-        nodes: template.nodes,
-        edges: template.edges,
-        organizationId: org!.id,
-        status: "DRAFT"
-      }
-    });
-    res.json(flow);
-  });
-
-  // Events
-  app.get("/api/events", async (req, res) => {
-    const org = await prisma.organization.findFirst();
-    const events = await prisma.event.findMany({
-      where: { contact: { organizationId: org?.id } },
-      include: { contact: true },
-      orderBy: { timestamp: "desc" },
-      take: 100,
-    });
-    res.json(events);
-  });
-
-  app.post("/api/events", async (req, res) => {
-    const { type, metadata, contactId, campaignId, variationId } = req.body;
-    
-    // Bounce/Complaint Suppression Logic (Enterprise Deliverability)
-    if (type === 'BOUNCE' || type === 'COMPLAINT') {
-      await prisma.contact.update({
-        where: { id: contactId },
-        data: { status: type === 'BOUNCE' ? 'BOUNCED' : 'COMPLAINED' }
-      });
-    }
-
-    const event = await createEventAndBroadcast({
-      type,
-      metadata,
-      contactId,
-      campaignId,
-      variationId,
-    });
-
-    res.json(event);
-  });
-
-  // AMP for Email Form Submission Endpoint
-  app.post("/api/amp/submit", async (req, res) => {
-    const { campaignId, contactId, type, ...data } = req.body;
-    
-    // AMP CORS Requirements
-    const origin = req.headers.origin || req.query.__amp_source_origin as string;
-    res.setHeader('Access-Control-Allow-Origin', origin || '*');
-    res.setHeader('AMP-Access-Control-Allow-Source-Origin', origin || '*');
-    res.setHeader('Access-Control-Expose-Headers', 'AMP-Access-Control-Allow-Source-Origin');
-
-    if (!campaignId || !contactId || !type) {
-      return res.status(400).json({ message: "Missing required fields" });
-    }
-
-    try {
-      await createEventAndBroadcast({
-        type: 'AMP_INTERACTION',
-        name: type,
-        campaignId,
-        contactId,
-        metadata: JSON.stringify(data)
-      });
-      res.json({ message: "Success", data });
-    } catch (error) {
-      res.status(500).json({ message: "Error saving response" });
-    }
-  });
-
-  // Advanced Analytics
-  app.get("/api/analytics/deliverability", async (req, res) => {
-    res.json({
-      inboxPlacement: 98.2,
-      spamPlacement: 1.4,
-      bounceRate: 0.4,
-      timeSeries: [
-        { date: '2024-01', inbox: 97.5, spam: 2.1, bounce: 0.4 },
-        { date: '2024-02', inbox: 98.2, spam: 1.4, bounce: 0.4 },
-      ]
-    });
-  });
-
-  app.get("/api/analytics/funnel", async (req, res) => {
-    res.json({
-      steps: [
-        { name: 'Sent', count: 10000, percentage: 100 },
-        { name: 'Opened', count: 2840, percentage: 28.4 },
-        { name: 'Clicked', count: 420, percentage: 4.2 },
-        { name: 'Converted', count: 120, percentage: 1.2 },
-      ]
-    });
-  });
-
-  app.get("/api/analytics/cohorts", async (req, res) => {
-    res.json({
-      cohorts: [
-        { month: 'Oct 2023', size: 1050, retention: [100, 82, 70, 62, 55, 50, 48, 45] },
-        { month: 'Nov 2023', size: 1150, retention: [100, 84, 72, 65, 58, 52, 50] },
-        { month: 'Dec 2023', size: 1300, retention: [100, 86, 75, 68, 62, 58] },
-        { month: 'Jan 2024', size: 1200, retention: [100, 85, 72, 64, 58] },
-        { month: 'Feb 2024', size: 1450, retention: [100, 88, 75, 68] },
-        { month: 'Mar 2024', size: 1100, retention: [100, 82, 70] },
-      ]
-    });
-  });
-
-  // --- Vite Middleware ---
-  if (process.env.NODE_ENV !== "production") {
+  // --- Vite Frontend Dev Middleware ---
+  if (process.env.NODE_ENV !== "production" && !process.env.VITEST) {
+    const { createServer: createViteServer } = await import("vite");
     const vite = await createViteServer({
       server: { middlewareMode: true },
       appType: "spa",
     });
     app.use(vite.middlewares);
-  } else {
-    app.use(express.static(path.join(__dirname, "dist")));
-    app.get("*", (req, res) => {
-      res.sendFile(path.join(__dirname, "dist", "index.html"));
+  }
+
+  if (process.env.NODE_ENV === "production") {
+    const distPath = path.resolve(process.cwd(), "dist");
+    app.use(express.static(distPath, { index: false }));
+    app.get("*", (req, res, next) => {
+      if (!req.accepts("html") || path.extname(req.path)) {
+        return next();
+      }
+      res.sendFile(path.join(distPath, "index.html"));
     });
   }
 
-  // AI Assistant Endpoints
-app.post("/api/ai/subject-lines", async (req, res) => {
-  const { topic } = req.body;
-  const lines = await geminiService.generateSubjectLines(topic);
-  res.json(lines);
-});
-
-app.post("/api/ai/optimize-preview", async (req, res) => {
-  const { subject, content } = req.body;
-  const preview = await geminiService.optimizePreviewText(subject, content);
-  res.json({ preview });
-});
-
-app.post("/api/ai/spam-check", async (req, res) => {
-  const { subject, content } = req.body;
-  const result = await geminiService.checkSpamScore(subject, content);
-  res.json(result);
-});
-
-app.post("/api/ai/adjust-tone", async (req, res) => {
-  const { content, tone } = req.body;
-  const rewritten = await geminiService.adjustTone(content, tone);
-  res.json({ content: rewritten });
-});
-
-app.post("/api/ai/predict-churn", async (req, res) => {
-  const { contactId } = req.body;
-  const contact = await prisma.contact.findUnique({
-    where: { id: contactId },
-    include: { 
-      events: { take: 50, orderBy: { timestamp: 'desc' } },
-      behavioralEvents: { take: 20, orderBy: { timestamp: 'desc' } },
-      revenue: { take: 10, orderBy: { timestamp: 'desc' } }
-    }
-  });
-  if (!contact) return res.status(404).json({ error: "Contact not found" });
-
-  // Get some context about the overall audience engagement
-  const avgEngagement = await prisma.contact.aggregate({
-    _avg: { engagementScore: true }
-  });
-
-  const risk = await geminiService.predictChurnRisk(contact, { 
-    averageEngagementScore: avgEngagement._avg.engagementScore 
-  });
-  res.json(risk);
-});
-
-app.post("/api/ai/translate", async (req, res) => {
-  const { content, language } = req.body;
-  const translated = await geminiService.translateContent(content, language);
-  res.json({ content: translated });
-});
-
-app.post("/api/ai/predict-send-time", async (req, res) => {
-  const { topic, timezone } = req.body;
-  
-  // Fetch historical open events grouped by hour
-  const openEvents = await prisma.event.findMany({
-    where: { type: 'OPEN' },
-    select: { timestamp: true }
-  });
-
-  const hourlyStats: Record<number, number> = {};
-  openEvents.forEach(e => {
-    const hour = new Date(e.timestamp).getUTCHours();
-    hourlyStats[hour] = (hourlyStats[hour] || 0) + 1;
-  });
-
-  const prediction = await geminiService.predictBestSendTime(topic, hourlyStats, timezone);
-  res.json(prediction);
-});
-
-app.post("/api/ai/generate-content", async (req, res) => {
-  const { brief, tone } = req.body;
-  const result = await geminiService.generateFullContent(brief, tone);
-  res.json(result);
-});
-
-// A/B Testing Endpoints
-app.get("/api/campaigns/:id/ab-results", async (req, res) => {
-  const { id } = req.params;
-  const campaign = await prisma.campaign.findUnique({ 
-    where: { id },
-    include: {
-      events: true
-    }
-  });
-  
-  if (!campaign || campaign.type !== 'AB') {
-    return res.status(404).json({ error: "A/B campaign not found" });
-  }
-
-  const eventsA = campaign.events.filter(e => e.variationId === 'A');
-  const eventsB = campaign.events.filter(e => e.variationId === 'B');
-
-  const stats = (events: any[]) => {
-    const opens = events.filter(e => e.type === 'OPEN').length;
-    const clicks = events.filter(e => e.type === 'CLICK').length;
-    const sent = events.filter(e => e.type === 'SENT').length || 1;
-    return {
-      opens,
-      clicks,
-      rate: (opens / sent) * 100,
-      clickRate: (clicks / sent) * 100
-    };
-  };
-
-  res.json({
-    variationA: stats(eventsA),
-    variationB: stats(eventsB),
-    winner: campaign.status === 'SENT' ? 'Determined' : null
-  });
-});
-
-app.post("/api/campaigns/:id/pick-winner", async (req, res) => {
-  const { id } = req.params;
-  const { winnerVariation } = req.body; // 'A' or 'B'
-  
-  const campaign = await prisma.campaign.findUnique({ where: { id } });
-  if (!campaign) return res.status(404).json({ error: "Campaign not found" });
-
-  const updateData: any = { status: 'SENT', sentAt: new Date() };
-  
-  if (winnerVariation === 'B' && campaign.subjectB && campaign.contentB) {
-    updateData.subject = campaign.subjectB;
-    updateData.content = campaign.contentB;
-  }
-
-  await prisma.campaign.update({
-    where: { id },
-    data: updateData
-  });
-
-  res.json({ message: `Winner ${winnerVariation} selected. Campaign sent to remaining audience.` });
-});
-
-app.post("/api/campaigns/:id/ab-simulate", async (req, res) => {
-  const { id } = req.params;
-  const campaign = await prisma.campaign.findUnique({ where: { id } });
-  if (!campaign || campaign.type !== 'AB') return res.status(404).json({ error: "A/B campaign not found" });
-
-  const contacts = await prisma.contact.findMany({ take: 100 });
-  
-  for (let i = 0; i < contacts.length; i++) {
-    const variation = i % 2 === 0 ? 'A' : 'B';
-    const contact = contacts[i];
-    
-    // Sent event
-    await createEventAndBroadcast({ type: 'SENT', contactId: contact.id, campaignId: id, variationId: variation });
-
-    // Random Open
-    if (Math.random() > 0.5) {
-      await createEventAndBroadcast({ type: 'OPEN', contactId: contact.id, campaignId: id, variationId: variation });
-
-      // Random Click
-      if (Math.random() > 0.7) {
-        await createEventAndBroadcast({ type: 'CLICK', contactId: contact.id, campaignId: id, variationId: variation });
+  app.use(errorHandler);
+  // Schedule campaigns cron job
+  cron.schedule("* * * * *", async () => {
+    try {
+      if (!campaignDeliveryQueue) {
+        logger.warn("Scheduled campaign queue is disabled because REDIS_URL is not configured");
+        return;
       }
-    }
-  }
-
-  res.json({ message: "A/B test simulation completed with 100 sample events." });
-});
-
-// Commerce & Products
-app.get("/api/products", async (req, res) => {
-  const org = await prisma.organization.findFirst();
-  const products = await prisma.product.findMany({ where: { organizationId: org?.id } });
-  res.json(products);
-});
-
-app.post("/api/products/sync", async (req, res) => {
-  const org = await prisma.organization.findFirst();
-  if (!org) return res.status(404).json({ error: "Org not found" });
-  
-  // Mock sync from Shopify/Woo
-  const mockProducts = [
-    { name: "Editorial Tote Bag", price: 25.00, source: "SHOPIFY", externalId: "sh_123" },
-    { name: "SIGNAL Annual Subscription", price: 120.00, source: "CUSTOM", externalId: "sub_456" },
-    { name: "Limited Edition Print", price: 45.00, source: "WOOCOMMERCE", externalId: "woo_789" }
-  ];
-
-  for (const p of mockProducts) {
-    await prisma.product.upsert({
-      where: { id: p.externalId }, // Using externalId as ID for mock
-      update: { 
-        name: p.name,
-        price: p.price,
-        source: p.source,
-        externalId: p.externalId
-      },
-      create: { 
-        name: p.name,
-        price: p.price,
-        source: p.source,
-        externalId: p.externalId,
-        organizationId: org.id, 
-        id: p.externalId 
-      }
-    });
-  }
-  res.json({ status: "Synced", count: mockProducts.length });
-});
-
-// Revenue Attribution
-app.get("/api/revenue/summary", async (req, res) => {
-  const org = await prisma.organization.findFirst();
-  const revenue = await prisma.revenue.aggregate({
-    where: { organizationId: org?.id },
-    _sum: { amount: true }
-  });
-  res.json({ totalRevenue: revenue._sum.amount || 0 });
-});
-
-app.get("/api/analytics/revenue/attribution", async (req, res) => {
-  const { model = 'LAST_CLICK' } = req.query;
-  const org = await prisma.organization.findFirst();
-  if (!org) return res.status(404).json({ error: "Org not found" });
-
-  const revenues = await prisma.revenue.findMany({
-    where: { organizationId: org.id },
-    include: { campaign: true, flow: true }
-  });
-
-  // In a real app, we'd query events for each revenue record.
-  // For this demo, we'll return mock data based on the requested model.
-  const attributionData = [
-    { name: "Summer Sale", value: model === 'FIRST_CLICK' ? 4500 : 3200, color: "#8884d8" },
-    { name: "Welcome Flow", value: model === 'LINEAR' ? 2800 : 1500, color: "#82ca9d" },
-    { name: "Abandoned Cart", value: model === 'LAST_CLICK' ? 5200 : 3800, color: "#ffc658" },
-    { name: "Product Launch", value: 2100, color: "#ff8042" },
-  ];
-
-  res.json(attributionData);
-});
-
-app.get("/api/analytics/cohorts", async (req, res) => {
-  const org = await prisma.organization.findFirst();
-  
-  // Mock cohort data: Retention of users acquired in specific months
-  const cohorts = [
-    { month: 'Oct 2025', size: 1200, retention: [100, 85, 72, 65, 58] },
-    { month: 'Nov 2025', size: 1500, retention: [100, 82, 68, 61] },
-    { month: 'Dec 2025', size: 2100, retention: [100, 78, 65] },
-    { month: 'Jan 2026', size: 1800, retention: [100, 88] },
-    { month: 'Feb 2026', size: 2400, retention: [100] },
-  ];
-  
-  res.json(cohorts);
-});
-
-app.get("/api/analytics/funnel", async (req, res) => {
-  const org = await prisma.organization.findFirst();
-  
-  // Mock funnel data
-  const funnel = [
-    { step: 'Sent', count: 50000, percentage: 100 },
-    { step: 'Opened', count: 12500, percentage: 25 },
-    { step: 'Clicked', count: 3200, percentage: 6.4 },
-    { step: 'Added to Cart', count: 850, percentage: 1.7 },
-    { step: 'Purchased', count: 210, percentage: 0.42 },
-  ];
-  
-  res.json(funnel);
-});
-
-// Team & Roles
-app.get("/api/team", async (req, res) => {
-  const org = await prisma.organization.findFirst();
-  const users = await prisma.user.findMany({ 
-    where: { organizationId: org?.id },
-    include: { customRole: true }
-  });
-  res.json(users);
-});
-
-app.post("/api/team/invite", async (req, res) => {
-  const { email, name, role, roleId } = req.body;
-  const org = await prisma.organization.findFirst();
-  if (!org) return res.status(404).json({ error: "Org not found" });
-
-  const newUser = await prisma.user.create({
-    data: { email, name, role, roleId, organizationId: org.id }
-  });
-  res.json(newUser);
-});
-
-app.get("/api/roles", async (req, res) => {
-  const org = await prisma.organization.findFirst();
-  const roles = await prisma.role.findMany({ where: { organizationId: org?.id } });
-  res.json(roles);
-});
-
-app.post("/api/roles", async (req, res) => {
-  const { name, permissions } = req.body;
-  const org = await prisma.organization.findFirst();
-  if (!org) return res.status(404).json({ error: "Org not found" });
-
-  const role = await prisma.role.create({
-    data: { name, permissions: JSON.stringify(permissions), organizationId: org.id }
-  });
-  res.json(role);
-});
-
-// Brands & Workspaces
-app.get("/api/brands", async (req, res) => {
-  const org = await prisma.organization.findFirst();
-  const brands = await prisma.brand.findMany({ where: { organizationId: org?.id } });
-  res.json(brands);
-});
-
-// Integrations
-app.get("/api/integrations", async (req, res) => {
-  const org = await prisma.organization.findFirst();
-  const integrations = await prisma.integration.findMany({ where: { organizationId: org?.id } });
-  res.json(integrations);
-});
-
-app.patch("/api/integrations/:id", async (req, res) => {
-  const { id } = req.params;
-  const { status, config } = req.body;
-  try {
-    const integration = await prisma.integration.update({
-      where: { id },
-      data: { 
-        status, 
-        config: typeof config === 'string' ? config : JSON.stringify(config) 
-      }
-    });
-    res.json(integration);
-  } catch (error) {
-    res.status(500).json({ error: "Failed to update integration" });
-  }
-});
-
-  // Approvals (Enterprise Governance)
-  app.get("/api/approvals", async (req, res) => {
-    const org = await prisma.organization.findFirst();
-    const approvals = await prisma.approvalRequest.findMany({
-      where: { 
-        OR: [
-          { template: { organizationId: org?.id } },
-          { campaign: { organizationId: org?.id } }
-        ]
-      },
-      include: { template: true, campaign: true },
-      orderBy: { createdAt: "desc" }
-    });
-    res.json(approvals);
-  });
-
-  app.post("/api/approvals", async (req, res) => {
-    const { templateId, campaignId, requesterId } = req.body;
-    const approval = await prisma.approvalRequest.create({
-      data: {
-        templateId,
-        campaignId,
-        requesterId: requesterId || "system",
-        status: "PENDING"
-      }
-    });
-    
-    // Update status of the entity
-    if (templateId) {
-      await prisma.template.update({ where: { id: templateId }, data: { status: "IN_REVIEW" } });
-    }
-    if (campaignId) {
-      await prisma.campaign.update({ where: { id: campaignId }, data: { status: "IN_REVIEW" } });
-    }
-    
-    res.json(approval);
-  });
-
-  app.patch("/api/approvals/:id", async (req, res) => {
-    const { status, comments } = req.body;
-    const approval = await prisma.approvalRequest.update({
-      where: { id: req.params.id },
-      data: { status, comments },
-      include: { template: true, campaign: true }
-    });
-    
-    const finalStatus = status === "APPROVED" ? "APPROVED" : "DRAFT";
-    
-    if (approval.templateId) {
-      await prisma.template.update({ where: { id: approval.templateId }, data: { status: finalStatus } });
-    }
-    if (approval.campaignId) {
-      await prisma.campaign.update({ where: { id: approval.campaignId }, data: { status: finalStatus } });
-    }
-    
-    res.json(approval);
-  });
-
-  // Preference Center (Compliance)
-  app.get("/api/preferences/:token", async (req, res) => {
-    const { token } = req.params;
-    const contact = await prisma.contact.findUnique({
-      where: { preferenceToken: token },
-      include: { 
-        listMemberships: { include: { list: true } },
-        organization: true
-      }
-    });
-    
-    if (!contact) return res.status(404).json({ error: "Invalid preference link" });
-
-    const allLists = await prisma.list.findMany({
-      where: { organizationId: contact.organizationId }
-    });
-
-    res.json({
-      contact: {
-        id: contact.id,
-        email: contact.email,
-        firstName: contact.firstName,
-        lastName: contact.lastName,
-        emailConsent: contact.emailConsent,
-        smsConsent: contact.smsConsent,
-        whatsappConsent: contact.whatsappConsent,
-      },
-      memberships: contact.listMemberships.map(m => m.listId),
-      availableLists: allLists,
-      organization: {
-        name: contact.organization.name,
-        logoUrl: contact.organization.logoUrl,
-      }
-    });
-  });
-
-  app.post("/api/preferences/:token", async (req, res) => {
-    const { token } = req.params;
-    const { listIds, emailConsent, smsConsent, whatsappConsent, ipAddress, userAgent } = req.body;
-    
-    const contact = await prisma.contact.findUnique({
-      where: { preferenceToken: token }
-    });
-    
-    if (!contact) return res.status(404).json({ error: "Invalid preference link" });
-
-    const contactId = contact.id;
-    
-    // Update contact consents
-    await prisma.contact.update({
-      where: { id: contactId },
-      data: {
-        emailConsent: !!emailConsent,
-        smsConsent: !!smsConsent,
-        whatsappConsent: !!whatsappConsent,
-      }
-    });
-
-    // Clear existing list memberships
-    await prisma.listMembership.deleteMany({ where: { contactId } });
-    
-    // Add new list memberships
-    if (listIds && listIds.length > 0) {
-      await prisma.listMembership.createMany({
-        data: listIds.map((listId: string) => ({ contactId, listId }))
-      });
-    }
-
-    // Log Consent
-    await prisma.consentLog.create({
-      data: {
-        contactId,
-        action: "PREFERENCE_UPDATE",
-        source: "PUBLIC_PREFERENCE_CENTER",
-        ipAddress: ipAddress || req.ip,
-        userAgent: userAgent || req.headers['user-agent'],
-        organizationId: contact.organizationId
-      }
-    });
-    
-    res.json({ success: true });
-  });
-
-  app.get("/api/contacts/:id/preferences", async (req, res) => {
-    const contact = await prisma.contact.findUnique({
-      where: { id: req.params.id },
-      include: { listMemberships: { include: { list: true } } }
-    });
-    const allLists = await prisma.list.findMany({
-      where: { organizationId: contact?.organizationId }
-    });
-    res.json({
-      contact,
-      memberships: contact?.listMemberships.map(m => m.listId),
-      availableLists: allLists
-    });
-  });
-
-  app.get("/api/contacts/:id/notifications", async (req, res) => {
-    const notifications = await prisma.notification.findMany({
-      where: { contactId: req.params.id },
-      orderBy: { createdAt: 'desc' }
-    });
-    res.json(notifications);
-  });
-
-  app.post("/api/contacts/:id/preferences", async (req, res) => {
-    const { listIds, emailConsent, smsConsent, whatsappConsent, source, ipAddress, userAgent } = req.body;
-    const contactId = req.params.id;
-    const org = await prisma.organization.findFirst();
-    
-    // Update contact consents
-    await prisma.contact.update({
-      where: { id: contactId },
-      data: {
-        emailConsent: !!emailConsent,
-        smsConsent: !!smsConsent,
-        whatsappConsent: !!whatsappConsent,
-      }
-    });
-
-    // Clear existing
-    await prisma.listMembership.deleteMany({ where: { contactId } });
-    
-    // Add new
-    if (listIds && listIds.length > 0) {
-      await prisma.listMembership.createMany({
-        data: listIds.map((listId: string) => ({ contactId, listId }))
-      });
-    }
-
-    // Log Consent
-    await prisma.consentLog.create({
-      data: {
-        contactId,
-        action: "PREFERENCE_UPDATE",
-        source: source || "PREFERENCE_CENTER",
-        ipAddress,
-        userAgent,
-        organizationId: org?.id || ""
-      }
-    });
-    
-    res.json({ success: true });
-  });
-
-  // GDPR Compliance Endpoints
-  app.get("/api/compliance/consent-logs", async (req, res) => {
-    const org = await prisma.organization.findFirst();
-    const logs = await prisma.consentLog.findMany({
-      where: { organizationId: org?.id },
-      include: { contact: true },
-      orderBy: { timestamp: "desc" }
-    });
-    res.json(logs);
-  });
-
-  app.get("/api/compliance/data-requests", async (req, res) => {
-    const org = await prisma.organization.findFirst();
-    const requests = await prisma.dataRequest.findMany({
-      where: { organizationId: org?.id },
-      include: { contact: true },
-      orderBy: { createdAt: "desc" }
-    });
-    res.json(requests);
-  });
-
-  app.post("/api/compliance/data-requests", async (req, res) => {
-    const { contactId, type } = req.body;
-    const org = await prisma.organization.findFirst();
-    const request = await prisma.dataRequest.create({
-      data: { contactId, type, organizationId: org?.id || "" }
-    });
-    res.json(request);
-  });
-
-  app.patch("/api/compliance/data-requests/:id", async (req, res) => {
-    const { status } = req.body;
-    const request = await prisma.dataRequest.update({
-      where: { id: req.params.id },
-      data: { status }
-    });
-    res.json(request);
-  });
-
-  // API & Webhooks
-app.get("/api/webhooks", async (req, res) => {
-  const org = await prisma.organization.findFirst();
-  const webhooks = await prisma.webhook.findMany({ where: { organizationId: org?.id } });
-  res.json(webhooks);
-});
-
-app.post("/api/webhooks", async (req, res) => {
-  const org = await prisma.organization.findFirst();
-  if (!org) return res.status(404).json({ error: "Organization not found" });
-  const { url, events } = req.body;
-  const webhook = await prisma.webhook.create({
-    data: {
-      url,
-      events: JSON.stringify(events),
-      organizationId: org.id,
-      isActive: true
-    }
-  });
-  res.json(webhook);
-});
-
-app.delete("/api/webhooks/:id", async (req, res) => {
-  await prisma.webhook.delete({ where: { id: req.params.id } });
-  res.json({ success: true });
-});
-
-// Shopify Incoming Webhooks
-app.post("/api/webhooks/shopify", async (req, res) => {
-  const topic = req.headers["x-shopify-topic"] as string;
-  const shopDomain = req.headers["x-shopify-shop-domain"] as string;
-  const payload = req.body;
-
-  console.log(`[Shopify Webhook] Received: ${topic} from ${shopDomain}`);
-
-  // Find organization
-  const org = await prisma.organization.findFirst();
-  if (!org) return res.status(200).end();
-
-  // Log the raw webhook
-  const log = await prisma.webhookLog.create({
-    data: {
-      source: "SHOPIFY",
-      topic: topic || "unknown",
-      payload: JSON.stringify(payload),
-      processed: false,
-      organizationId: org.id
+      const claim = await claimScheduledCampaigns(new Date(), campaignDeliveryQueue);
+      const recovered = await enqueueOrphanedDispatches(campaignDeliveryQueue);
+      logger.info({ ...claim, recovered }, "Scheduled campaigns atomically claimed and queued");
+    } catch (error) {
+      logger.error({ err: error }, "Error queuing scheduled campaigns");
     }
   });
 
-  try {
-    if (topic === "products/update") {
-      const { variants } = payload;
-      if (variants && Array.isArray(variants)) {
-        for (const variant of variants) {
-          await prisma.product.updateMany({
-            where: {
-              externalId: variant.id.toString(),
-              organizationId: org.id
-            },
-            data: {
-              stock: variant.inventory_quantity,
-              price: parseFloat(variant.price),
-              updatedAt: new Date()
-            }
-          });
-        }
+  // Schedule segment refresh cron job (runs every 5 minutes)
+  cron.schedule("*/5 * * * *", async () => {
+    try {
+      console.log("Starting background segment refresh...");
+      const segments = await prisma.segment.findMany({ select: { id: true } });
+
+      for (const segment of segments) {
+        await refreshSegment(segment.id);
       }
+      console.log("Background segment refresh completed.");
+    } catch (error) {
+      console.error("Error in segment refresh cron job:", error);
     }
-
-    if (topic === "orders/create") {
-      const { customer, total_price, id: orderId } = payload;
-      if (customer && customer.email) {
-        const contact = await prisma.contact.findFirst({
-          where: { email: customer.email, organizationId: org.id }
-        });
-
-        if (contact) {
-          await createEventAndBroadcast({
-            type: "ORDER_PLACED",
-            metadata: { 
-              orderId, 
-              total: total_price,
-              source: "SHOPIFY_WEBHOOK"
-            },
-            contactId: contact.id,
-          });
-        }
-      }
-    }
-
-    // Mark as processed
-    await prisma.webhookLog.update({
-      where: { id: log.id },
-      data: { processed: true }
-    });
-
-  } catch (error) {
-    console.error("[Shopify Webhook] Error processing:", error);
-  }
-
-  res.status(200).end();
-});
-
-app.post("/api/webhooks/shopify/simulate", async (req, res) => {
-  const { type } = req.body;
-  const org = await prisma.organization.findFirst();
-  if (!org) return res.status(404).json({ error: "No organization found" });
-
-  // Ensure mock product exists
-  let product = await prisma.product.findFirst({
-    where: { externalId: "shopify_12345", organizationId: org.id }
   });
 
-  if (!product) {
-    product = await prisma.product.create({
-      data: {
-        name: "Mock Shopify Product",
-        externalId: "shopify_12345",
-        price: 99.99,
-        source: "SHOPIFY",
-        stock: 10,
-        organizationId: org.id
-      }
-    });
-  }
-
-  if (type === 'stock') {
-    const newStock = Math.floor(Math.random() * 100);
-    // Simulate by calling the handler logic (or just updating directly for the simulation)
-    await prisma.product.update({
-      where: { id: product.id },
-      data: { stock: newStock }
-    });
-    
-    await prisma.webhookLog.create({
-      data: {
-        source: "SHOPIFY",
-        topic: "products/update",
-        payload: JSON.stringify({ id: 12345, variants: [{ id: "shopify_12345", inventory_quantity: newStock, price: "99.99" }] }),
-        processed: true,
-        organizationId: org.id
-      }
-    });
-
-    return res.json({ success: true, message: `Stock updated to ${newStock} via simulated webhook` });
-  }
-
-  if (type === 'order') {
-    const contact = await prisma.contact.findFirst({ where: { organizationId: org.id } });
-    if (!contact) return res.status(404).json({ error: "No contact found to simulate order" });
-
-    const orderId = Date.now().toString();
-    await createEventAndBroadcast({
-      type: "ORDER_PLACED",
-      metadata: { orderId, total: "149.50", source: "SIMULATED_WEBHOOK" },
-      contactId: contact.id,
-    });
-
-    await prisma.webhookLog.create({
-      data: {
-        source: "SHOPIFY",
-        topic: "orders/create",
-        payload: JSON.stringify({ id: orderId, total_price: "149.50", customer: { email: contact.email } }),
-        processed: true,
-        organizationId: org.id
-      }
-    });
-
-    return res.json({ success: true, message: "Order creation simulated via webhook" });
-  }
-
-  res.status(400).json({ error: "Invalid simulation type" });
-});
-
-// AI & Predictive
-app.post("/api/ai/churn-prediction", async (req, res) => {
-  const org = await prisma.organization.findFirst();
-  if (!org) return res.status(404).json({ error: "Org not found" });
-
-  // Fetch contacts with low engagement scores or no recent activity
-  const atRiskContacts = await prisma.contact.findMany({
-    where: { 
-      organizationId: org.id,
-      status: 'SUBSCRIBED',
-      engagementScore: { lt: 40 }
-    },
-    take: 10,
-    orderBy: { engagementScore: 'asc' },
-    include: { tags: true }
-  });
-
-  // Use Gemini to summarize the risk for the top at-risk contacts
-  const predictions = await Promise.all(atRiskContacts.map(async (c) => {
-    const risk = await geminiService.predictChurnRisk(c);
-    return {
-      name: `${c.firstName || ''} ${c.lastName || ''}`.trim() || c.email,
-      email: c.email,
-      score: c.engagementScore,
-      prob: `${Math.round(risk.probability * 100)}%`,
-      risk: risk.riskLevel,
-      reasons: risk.reasons
-    };
-  }));
-
-  const stats = await prisma.contact.groupBy({
-    by: ['status'],
-    where: { organizationId: org.id },
-    _count: true
-  });
-
-  res.json({
-    summary: { 
-      high: predictions.filter(p => p.risk === 'HIGH').length * 10, // Scaled for demo
-      medium: predictions.filter(p => p.risk === 'MEDIUM').length * 15,
-      low: stats.find(s => s.status === 'SUBSCRIBED')?._count || 0
-    },
-    topAtRisk: predictions
-  });
-});
-
-// --- SSO (Enterprise) ---
-app.get("/api/auth/sso/config", async (req, res) => {
-  const org = await prisma.organization.findFirst();
-  if (!org) return res.status(404).json({ error: "Organization not found" });
-  res.json({
-    ssoEnabled: org.ssoEnabled,
-    ssoDomain: org.ssoDomain,
-    ssoClientId: org.ssoClientId,
-    ssoIssuer: org.ssoIssuer,
-    // Don't send the secret to the client
-  });
-});
-
-app.post("/api/auth/sso/config", async (req, res) => {
-  const org = await prisma.organization.findFirst();
-  if (!org) return res.status(404).json({ error: "Organization not found" });
-
-  const { ssoEnabled, ssoDomain, ssoClientId, ssoClientSecret, ssoIssuer, ssoEntryPoint, ssoCert } = req.body;
-  
-  const updated = await prisma.organization.update({
-    where: { id: org.id },
-    data: {
-      ssoEnabled,
-      ssoDomain,
-      ssoClientId,
-      ssoClientSecret,
-      ssoIssuer,
-      ssoEntryPoint,
-      ssoCert,
-    },
-  });
-
-  res.json(updated);
-});
-
-app.get("/api/auth/sso/url", async (req, res) => {
-  const { domain } = req.query;
-  const org = await prisma.organization.findFirst({
-    where: domain ? { ssoDomain: domain as string } : {}
-  });
-
-  if (!org || !org.ssoEnabled) {
-    return res.status(400).json({ error: "SSO not enabled for this domain" });
-  }
-
-  const redirectUri = `${process.env.APP_URL || `http://localhost:3000`}/auth/sso/callback`;
-
-  if (org.ssoIssuer) {
-    const params = new URLSearchParams({
-      client_id: org.ssoClientId || "",
-      redirect_uri: redirectUri,
-      response_type: 'code',
-      scope: 'openid profile email',
-      state: org.id,
-    });
-    return res.json({ url: `${org.ssoIssuer}/authorize?${params.toString()}` });
-  }
-
-  // Fallback to mock if no issuer
-  return res.json({ 
-    url: `/auth/sso/mock-login?orgId=${org.id}`,
-    isMock: true 
-  });
-});
-
-app.get("/auth/sso/callback", async (req, res) => {
-  const { code, state: orgId } = req.query;
-  
-  const org = await prisma.organization.findUnique({ where: { id: orgId as string } });
-  if (!org) return res.status(404).send("Organization not found");
-
-  // Simulate user info from IdP
-  const email = "enterprise-user@signal.app";
-  const name = "Enterprise User";
-
-  let user = await prisma.user.findUnique({ where: { email } });
-  if (!user) {
-    user = await prisma.user.create({
-      data: {
-        email,
-        name,
-        organizationId: org.id,
-        role: "EDITOR",
-        status: "ACTIVE",
-        ssoProvider: "OIDC",
-        ssoId: `sso-${Date.now()}`
-      }
-    });
-  }
-
-  // Log the user in (Passport session)
-  req.login(user, (err) => {
-    if (err) return res.status(500).send("Login failed");
-    
-    res.send(`
-      <html>
-        <body style="font-family: sans-serif; display: flex; align-items: center; justify-content: center; height: 100vh; background: #F5F2EC; margin: 0;">
-          <div style="text-align: center; padding: 40px; background: white; border: 1px solid #1A1814; box-shadow: 0 4px 20px rgba(0,0,0,0.05);">
-            <h2 style="font-family: serif; margin-top: 0;">SSO Authentication Successful</h2>
-            <p style="font-size: 14px; color: #666;">Your enterprise account has been linked successfully.</p>
-            <div style="margin: 20px 0; color: #2D5A27; font-weight: bold;">✓ Verified</div>
-            <p style="font-size: 10px; color: #999;">This window will close automatically.</p>
-            <script>
-              if (window.opener) {
-                window.opener.postMessage({ type: 'SSO_AUTH_SUCCESS', user: ${JSON.stringify(user)} }, '*');
-                setTimeout(() => window.close(), 2000);
-              } else {
-                window.location.href = '/';
-              }
-            </script>
-          </div>
-        </body>
-      </html>
-    `);
-  });
-});
-
-app.get("/auth/sso/mock-login", (req, res) => {
-  const { orgId } = req.query;
-  res.send(`
-    <html>
-      <body style="font-family: sans-serif; display: flex; align-items: center; justify-content: center; height: 100vh; background: #F5F2EC; margin: 0;">
-        <div style="text-align: center; padding: 40px; background: white; border: 1px solid #1A1814; max-width: 400px; box-shadow: 0 4px 20px rgba(0,0,0,0.05);">
-          <div style="font-size: 10px; font-weight: bold; text-transform: uppercase; letter-spacing: 0.1em; color: #8B1A1A; margin-bottom: 10px;">Enterprise Portal</div>
-          <h2 style="font-family: serif; margin-bottom: 20px; font-size: 24px;">Sign in to SIGNAL</h2>
-          <p style="font-size: 12px; color: #666; margin-bottom: 30px; line-height: 1.5;">This is a simulated SSO provider (Auth0/Okta) for demonstration purposes. In production, this would be your corporate login page.</p>
-          <button onclick="window.location.href='/auth/sso/callback?code=mock_code&state=${orgId}'" 
-                  style="background: #1A1814; color: white; border: none; padding: 14px 24px; cursor: pointer; font-weight: bold; width: 100%; text-transform: uppercase; letter-spacing: 0.05em; transition: opacity 0.2s;">
-            Continue with Enterprise ID
-          </button>
-          <div style="margin-top: 20px; font-size: 10px; color: #999;">Secure Connection via OAuth 2.0</div>
-        </div>
-      </body>
-    </html>
-  `);
-});
-
-app.post("/api/me/mfa", async (req, res) => {
-  const { enabled } = req.body;
-  const user = await prisma.user.findFirst();
-  if (!user) return res.status(404).json({ error: "User not found" });
-
-  const updatedUser = await prisma.user.update({
-    where: { id: user.id },
-    data: { mfaEnabled: enabled }
-  });
-  res.json(updatedUser);
-});
-
-// --- Engagement Tracking ---
-
-app.post("/api/engagement", async (req, res) => {
-  const { campaignId, contactId, type, value, sectionId, metadata } = req.body;
-  
-  try {
-    const event = await prisma.engagementEvent.create({
-      data: {
-        campaignId,
-        contactId,
-        type,
-        value: parseFloat(value),
-        sectionId,
-        metadata: metadata ? JSON.stringify(metadata) : null,
-      }
-    });
-    res.json(event);
-  } catch (error) {
-    console.error("Error creating engagement event:", error);
-    res.status(500).json({ error: "Failed to record engagement" });
-  }
-});
-
-app.get("/api/campaigns/:id/engagement", async (req, res) => {
-  const { id } = req.params;
-  
-  try {
-    const events = await prisma.engagementEvent.findMany({
-      where: { campaignId: id },
-      orderBy: { timestamp: 'asc' }
-    });
-    
-    // Aggregate data for heatmap and metrics
-    const totalReadTime = events
-      .filter(e => e.type === 'read_time')
-      .reduce((acc, e) => acc + e.value, 0);
-      
-    const avgScrollDepth = events
-      .filter(e => e.type === 'scroll')
-      .reduce((acc, e, _, arr) => acc + (e.value / arr.length), 0);
-      
-    const sectionEngagement = events.reduce((acc: any, e) => {
-      if (e.sectionId) {
-        if (!acc[e.sectionId]) acc[e.sectionId] = { readTime: 0, views: 0 };
-        if (e.type === 'read_time') acc[e.sectionId].readTime += e.value;
-        if (e.type === 'scroll') acc[e.sectionId].views += 1;
-      }
-      return acc;
-    }, {});
-
-    res.json({
-      events,
-      summary: {
-        totalReadTime,
-        avgScrollDepth,
-        sectionEngagement
-      }
-    });
-  } catch (error) {
-    res.status(500).json({ error: "Failed to fetch engagement data" });
-  }
-});
-
-// --- Asset Management ---
-
-app.get("/api/assets", async (req, res) => {
-  try {
-    const assets = await prisma.asset.findMany({
-      orderBy: { createdAt: 'desc' }
-    });
-    res.json(assets);
-  } catch (error) {
-    res.status(500).json({ error: "Failed to fetch assets" });
-  }
-});
-
-app.post("/api/assets", async (req, res) => {
-  const { name, url, type, metadata } = req.body;
-  const org = await prisma.organization.findFirst();
-  if (!org) return res.status(404).json({ error: "Organization not found" });
-
-  try {
-    const asset = await prisma.asset.create({
-      data: {
-        name,
-        url,
-        type,
-        metadata: metadata ? JSON.stringify(metadata) : null,
-        organizationId: org.id
-      }
-    });
-    res.json(asset);
-  } catch (error) {
-    res.status(500).json({ error: "Failed to create asset" });
-  }
-});
-
-app.delete("/api/assets/:id", async (req, res) => {
-  const { id } = req.params;
-  try {
-    await prisma.asset.delete({ where: { id } });
-    res.json({ success: true });
-  } catch (error) {
-    res.status(500).json({ error: "Failed to delete asset" });
-  }
-});
-
-// Schedule campaigns cron job
-cron.schedule('* * * * *', async () => {
-  try {
-    const now = new Date();
-    const scheduledCampaigns = await prisma.campaign.findMany({
-      where: {
-        status: 'SCHEDULED',
-        scheduledAt: {
-          lte: now
-        }
-      }
-    });
-
-    for (const campaign of scheduledCampaigns) {
-      // If perUserTimezone is enabled, we need to handle it differently
-      // For now, we'll just send it if it's past the scheduled time in UTC
-      // A full implementation would check the user's timezone and send accordingly
-      // which might require a more complex query or processing loop
-      
-      // Update status to SENDING
-      await prisma.campaign.update({
-        where: { id: campaign.id },
-        data: { status: 'SENDING' }
-      });
-
-      // Simulate sending process
-      setTimeout(async () => {
-        await prisma.campaign.update({
-          where: { id: campaign.id },
-          data: { status: 'SENT', sentAt: new Date() }
-        });
-        console.log(`Campaign ${campaign.id} sent successfully.`);
-      }, 2000); // Simulate 2 seconds sending time
-    }
-  } catch (error) {
-    console.error("Error processing scheduled campaigns:", error);
-  }
-});
-
-// Schedule segment refresh cron job (runs every 5 minutes)
-cron.schedule('*/5 * * * *', async () => {
-  try {
-    console.log("Starting background segment refresh...");
-    const segments = await prisma.segment.findMany({ select: { id: true } });
-    
-    for (const segment of segments) {
-      await refreshSegment(segment.id);
-    }
-    console.log("Background segment refresh completed.");
-  } catch (error) {
-    console.error("Error in segment refresh cron job:", error);
-  }
-});
-
-httpServer.listen(PORT, "0.0.0.0", () => {
-  console.log(`SIGNAL Server running on http://localhost:${PORT}`);
-});
+  return { app, httpServer };
 }
 
-startServer().catch(console.error);
+async function startServer() {
+  const config = validateConfig();
+  if (!config.valid) {
+    logger.error({ errors: config.errors }, "Startup config validation failed");
+    process.exit(1);
+  }
+  if (config.warnings.length > 0) {
+    logger.warn({ warnings: config.warnings }, "Config warnings");
+  }
+
+  const PORT = parseInt(process.env.PORT || "3000", 10);
+  const { httpServer: server } = await createApp();
+
+  process.on("uncaughtException", (err) => {
+    logger.fatal({ err }, "Uncaught exception - shutting down");
+    process.exit(1);
+  });
+
+  process.on("unhandledRejection", (reason) => {
+    logger.fatal({ reason }, "Unhandled promise rejection - shutting down");
+    process.exit(1);
+  });
+
+  const gracefulShutdown = (signal: string) => {
+    logger.info({ signal }, `Received ${signal} - starting graceful shutdown`);
+    server.close(async () => {
+      logger.info("HTTP server closed");
+      try {
+        await emailDeliveryWorker?.close();
+        await referralVerificationWorker?.close();
+        await workflowWorker?.close();
+        await campaignDeliveryQueue?.close();
+        await referralVerificationQueue?.close();
+        await dataRequestWorker?.close();
+        await dataRequestQueue?.close();
+        await validationQueue?.close();
+      } catch {}
+      try {
+        await redisService.disconnect?.();
+      } catch {}
+      try {
+        await prisma.$disconnect();
+      } catch {}
+      logger.info("Graceful shutdown complete");
+      process.exit(0);
+    });
+
+    setTimeout(() => {
+      logger.fatal("Graceful shutdown timed out after 10s");
+      process.exit(1);
+    }, 10000);
+  };
+
+  process.on("SIGTERM", () => gracefulShutdown("SIGTERM"));
+  process.on("SIGINT", () => gracefulShutdown("SIGINT"));
+
+  server.listen(PORT, "0.0.0.0", () => {
+    logger.info({ port: PORT }, "SIGNAL server started");
+  });
+}
+
+if (!process.env.VITEST) {
+  startServer().catch(console.error);
+}

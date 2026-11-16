@@ -1,12 +1,20 @@
 export class TypoSuggestionEngine {
   private static POPULAR_DOMAINS = [
-    'gmail.com', 'yahoo.com', 'hotmail.com', 'outlook.com', 'aol.com',
-    'icloud.com', 'me.com', 'mac.com', 'live.com', 'msn.com'
+    "gmail.com",
+    "yahoo.com",
+    "hotmail.com",
+    "outlook.com",
+    "aol.com",
+    "icloud.com",
+    "me.com",
+    "mac.com",
+    "live.com",
+    "msn.com",
   ];
 
   static suggest(domain: string): string | null {
     const lowerDomain = domain.toLowerCase();
-    
+
     // If it's already a popular domain, no suggestion
     if (this.POPULAR_DOMAINS.includes(lowerDomain)) {
       return null;

@@ -1,4 +1,5 @@
 import Redis from "ioredis";
+import { logger } from "./logger";
 
 class RedisService {
   private client: Redis | null = null;
@@ -11,20 +12,20 @@ class RedisService {
         retryStrategy(times) {
           if (times > 3) return null; // Stop retrying after 3 attempts
           return Math.min(times * 50, 2000);
-        }
+        },
       });
-      this.client.on('error', (err: any) => {
-        if (err.code === 'ECONNREFUSED') {
-          console.warn(`Redis connection refused at ${process.env.REDIS_URL}. Caching disabled.`);
+      this.client.on("error", (err: any) => {
+        if (err.code === "ECONNREFUSED") {
+          logger.warn({ code: err.code }, "Redis connection refused; caching disabled");
           this.client?.disconnect();
           this.client = null;
         } else {
-          console.error("Redis error:", err);
+          logger.error({ code: err?.code, name: err?.name }, "Redis client error");
         }
       });
-      console.log("Redis connection initialized.");
+      logger.info("Redis connection initialized");
     } else {
-      console.warn("REDIS_URL not set. Caching disabled.");
+      logger.warn("REDIS_URL is not set; caching disabled");
     }
   }
 
@@ -44,18 +45,34 @@ class RedisService {
     await this.client.del(key);
   }
 
-  async rateLimit(key: string, limit: number, windowSeconds: number): Promise<{ remaining: number, reset: number }> {
-    if (!this.client) return { remaining: limit, reset: Date.now() + windowSeconds * 1000 };
-    
+  disconnect(): void {
+    this.client?.disconnect();
+    this.client = null;
+  }
+
+  async rateLimit(
+    key: string,
+    limit: number,
+    windowSeconds: number
+  ): Promise<{ allowed: boolean; remaining: number; reset: number }> {
+    if (!this.client) {
+      return {
+        allowed: process.env.NODE_ENV !== "production",
+        remaining: process.env.NODE_ENV === "production" ? 0 : limit,
+        reset: Date.now() + windowSeconds * 1000,
+      };
+    }
+
     const count = await this.client.incr(key);
     if (count === 1) {
       await this.client.expire(key, windowSeconds);
     }
-    
+
     const ttl = await this.client.ttl(key);
     return {
+      allowed: count <= limit,
       remaining: Math.max(0, limit - count),
-      reset: Date.now() + (ttl > 0 ? ttl : windowSeconds) * 1000
+      reset: Date.now() + (ttl > 0 ? ttl : windowSeconds) * 1000,
     };
   }
 }

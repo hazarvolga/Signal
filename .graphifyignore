@@ -1,0 +1,35 @@
+# === Dependencies & Build ===
+node_modules/
+dist/
+build/
+package-lock.json
+
+# === IDE / Agent Metadata ===
+.agent/
+.kiro/
+.vscode/
+.agents/
+graphify-out/
+
+# === Tests (all locations) ===
+tests/
+test-*.js
+test-*.cjs
+*.test.tsx
+*.test.ts
+*.spec.tsx
+*.spec.ts
+
+# === Build & Config (no app logic) ===
+vite.config.ts
+tsconfig.json
+index.html
+
+# === Noise: Monolith & Data-only files ===
+src/App.tsx
+src/main.tsx
+src/lib/utils.ts
+src/data/mjmlTemplates.ts
+
+# === Duplicate Documentation ===
+MONACO_EDITOR_INTEGRATION.md

@@ -1,22 +1,26 @@
-import { validateSyntax, normalizeEmail } from './syntax';
-import { DNSResolverService } from './dns';
-import { SMTPVerificationService } from './smtp';
-import { DomainIntelligenceService } from './intelligence';
-import { ScoringEngine, ScoringResult, ValidationDetails } from './scoring';
-import { TypoSuggestionEngine } from './typo';
+import { validateSyntax, normalizeEmail } from "./syntax";
+import { DNSResolverService } from "./dns";
+import { SMTPVerificationService } from "./smtp";
+import { DomainIntelligenceService } from "./intelligence";
+import { ScoringEngine, ScoringResult, ValidationDetails } from "./scoring";
+import { TypoSuggestionEngine } from "./typo";
 
 export class ValidationEngine {
-  static async validate(email: string, context?: { historicalBounceRate?: number, engagementScore?: number }): Promise<ScoringResult> {
+  static async validate(
+    email: string,
+    context?: { historicalBounceRate?: number; engagementScore?: number }
+  ): Promise<ScoringResult> {
     const details: ValidationDetails = {
       syntax: false,
       dns: false,
       smtp: false,
+      smtpStatus: "not_checked",
       disposable: false,
       roleBased: false,
-      catchAll: false,
+      catchAll: null,
       temporary: false,
       isParked: false,
-      isRecentlyRegistered: false,
+      isRecentlyRegistered: null,
       historicalBounceRate: context?.historicalBounceRate,
       engagementScore: context?.engagementScore,
     };
@@ -27,10 +31,10 @@ export class ValidationEngine {
       return ScoringEngine.calculate(details);
     }
     details.syntax = true;
-    
+
     // Normalize after syntax check
     const normalized = normalizeEmail(email);
-    const [localPart, domain] = normalized.split('@');
+    const [localPart, domain] = normalized.split("@");
 
     // 8. Typo Suggestion
     const typo = TypoSuggestionEngine.suggest(domain);
@@ -58,7 +62,15 @@ export class ValidationEngine {
       try {
         const smtpResult = await SMTPVerificationService.verify(normalized, mxHost);
         details.smtp = smtpResult.success;
-        
+        details.smtpStatus = smtpResult.success
+          ? "accepted"
+          : smtpResult.isTemporaryFailure
+            ? "temporary"
+            : smtpResult.code === 403 || smtpResult.code === 502
+              ? "unavailable"
+              : "rejected";
+        details.temporary = Boolean(smtpResult.isTemporaryFailure);
+
         // Only check catch-all if SMTP is successful or risky
         if (smtpResult.success || smtpResult.isTemporaryFailure) {
           details.catchAll = await SMTPVerificationService.checkCatchAll(domain, mxHost);
@@ -72,7 +84,7 @@ export class ValidationEngine {
     if (typo) {
       finalResult.suggestedCorrection = `${localPart}@${typo}`;
     }
-    
+
     return finalResult;
   }
 }

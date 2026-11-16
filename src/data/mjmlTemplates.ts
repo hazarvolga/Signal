@@ -39,7 +39,7 @@ const createTemplate = (name: string, title: string, preview: string, body: stri
     </mj-section>
     ${baseFooter}
   </mj-body>
-</mjml>`
+</mjml>`,
 });
 
 export const mjmlTemplates = [
@@ -526,5 +526,5 @@ export const mjmlTemplates = [
         </mj-text>
         <mj-button href="{{cta_link}}" align="left" padding-top="30px">Read More</mj-button>
     `
-  )
+  ),
 ];

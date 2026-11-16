@@ -1,0 +1,98 @@
+groups:
+  - name: signal-production
+    rules:
+      - alert: SignalTargetDown
+        expr: up{job="signal"} == 0
+        for: 2m
+        labels: { severity: critical }
+        annotations:
+          summary: Signal metrics target is unreachable
+          runbook_url: /docs/RUNBOOK.md#uygulama-erisim-alarmi
+
+      - alert: SignalHttp5xxRateHigh
+        expr: sum(rate(http_requests_total{status=~"5.."}[5m])) / clamp_min(sum(rate(http_requests_total[5m])), 1) > 0.02
+        for: 5m
+        labels: { severity: critical }
+        annotations:
+          summary: Signal HTTP 5xx ratio is above 2 percent
+          runbook_url: /docs/RUNBOOK.md#http-5xx-alarmi
+
+      - alert: SignalDependencyDown
+        expr: signal_dependency_up == 0
+        for: 2m
+        labels: { severity: critical }
+        annotations:
+          summary: A required Signal dependency is unavailable
+          runbook_url: /docs/RUNBOOK.md#dependency-alarmi
+
+      - alert: SignalDatabaseConnectionPressure
+        expr: signal_db_connection_usage_ratio > 0.80
+        for: 5m
+        labels: { severity: warning }
+        annotations:
+          summary: PostgreSQL connection utilization is above 80 percent
+          runbook_url: /docs/RUNBOOK.md#postgresql-baglanti-alarmi
+
+      - alert: SignalRedisMemoryPressure
+        expr: signal_redis_memory_usage_ratio > 0.80
+        for: 5m
+        labels: { severity: critical }
+        annotations:
+          summary: Redis memory utilization is above 80 percent
+          runbook_url: /docs/RUNBOOK.md#redis-bellek-alarmi
+
+      - alert: SignalQueueTelemetryMissing
+        expr: signal_queue_scrape_up == 0
+        for: 5m
+        labels: { severity: warning }
+        annotations:
+          summary: BullMQ telemetry collection is failing
+          runbook_url: /docs/RUNBOOK.md#queue-telemetry-alarmi
+
+      - alert: SignalQueueBacklogHigh
+        expr: signal_queue_jobs{state="waiting"} > 1000
+        for: 10m
+        labels: { severity: warning }
+        annotations:
+          summary: A Signal queue has more than 1000 waiting jobs
+          runbook_url: /docs/RUNBOOK.md#queue-backlog-alarmi
+
+      - alert: SignalQueueOldestJobHigh
+        expr: signal_queue_oldest_waiting_seconds > 300
+        for: 5m
+        labels: { severity: critical }
+        annotations:
+          summary: Oldest queued Signal job is more than five minutes old
+          runbook_url: /docs/RUNBOOK.md#queue-lag-alarmi
+
+      - alert: SignalQueueWorkerFailures
+        expr: sum by (queue) (increase(signal_queue_worker_events_total{event="failed"}[10m])) > 5
+        for: 5m
+        labels: { severity: critical }
+        annotations:
+          summary: Repeated Signal worker failures detected
+          runbook_url: /docs/RUNBOOK.md#queue-worker-alarmi
+
+      - alert: SignalEmailProviderFailureRateHigh
+        expr: sum by (provider) (rate(signal_email_provider_requests_total{outcome="failed"}[10m])) / clamp_min(sum by (provider) (rate(signal_email_provider_requests_total[10m])), 0.001) > 0.05
+        for: 10m
+        labels: { severity: critical }
+        annotations:
+          summary: Email provider failure ratio is above 5 percent
+          runbook_url: /docs/RUNBOOK.md#email-provider-alarmi
+
+      - alert: SignalEmailProviderLatencyHigh
+        expr: histogram_quantile(0.95, sum by (le, provider) (rate(signal_email_provider_request_duration_seconds_bucket[10m]))) > 2
+        for: 10m
+        labels: { severity: warning }
+        annotations:
+          summary: Email provider p95 latency is above two seconds
+          runbook_url: /docs/RUNBOOK.md#email-provider-alarmi
+
+      - alert: SignalAiBudgetRejected
+        expr: increase(signal_ai_budget_rejections_total[15m]) > 0
+        for: 1m
+        labels: { severity: warning }
+        annotations:
+          summary: A tenant AI request was rejected by the monthly budget
+          runbook_url: /docs/RUNBOOK.md#ai-budget-alarmi

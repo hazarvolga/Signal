@@ -1,9 +1,21 @@
-import React from 'react';
-import { AmpSurveyPreview } from './AmpSurveyPreview';
-import { AmpProductPreview } from './AmpProductPreview';
-import { ReferralWidgetPreview } from './ReferralWidgetPreview';
+import React from "react";
+import { AmpSurveyPreview } from "./AmpSurveyPreview";
+import { AmpProductPreview } from "./AmpProductPreview";
+import { ReferralWidgetPreview } from "./ReferralWidgetPreview";
 
-export const ContentRenderer = ({ content, campaignId, contactId, contact, className = "prose prose-sm font-serif" }: { content: string, campaignId: string, contactId: string, contact?: any, className?: string }) => {
+export const ContentRenderer = ({
+  content,
+  campaignId,
+  contactId,
+  contact,
+  className = "prose prose-sm font-serif",
+}: {
+  content: string;
+  campaignId: string;
+  contactId: string;
+  contact?: any;
+  className?: string;
+}) => {
   if (!content) return null;
 
   // Process DYNAMIC blocks first
@@ -18,18 +30,19 @@ export const ContentRenderer = ({ content, campaignId, contactId, contact, class
         ${innerContent}
       </div>`;
     }
-    
+
     // Evaluate condition
-    const contactValue = contact[field] || (contact.tags && contact.tags.includes(value) ? value : null);
+    const contactValue =
+      contact[field] || (contact.tags && contact.tags.includes(value) ? value : null);
     if (contactValue && contactValue.toString().toLowerCase() === value.toLowerCase()) {
       return innerContent;
     }
-    return ''; // Hide if condition not met
+    return ""; // Hide if condition not met
   });
-  
+
   // Regex to match [[AMP_SURVEY:Question|Option1,Option2]], [[AMP_PRODUCT:Name|Price|Button]], and [[REFERRAL_WIDGET]]
   const widgetRegex = /\[\[(AMP_SURVEY|AMP_PRODUCT|REFERRAL_WIDGET)(?::(.*?)\|(.*?))?\]\]/g;
-  
+
   const parts = [];
   let lastIndex = 0;
   let match;
@@ -38,48 +51,43 @@ export const ContentRenderer = ({ content, campaignId, contactId, contact, class
     // Add the HTML before the match
     if (match.index > lastIndex) {
       parts.push(
-        <div 
-          key={`html-${lastIndex}`} 
+        <div
+          key={`html-${lastIndex}`}
           className={className}
-          dangerouslySetInnerHTML={{ __html: processedContent.substring(lastIndex, match.index) }} 
+          dangerouslySetInnerHTML={{ __html: processedContent.substring(lastIndex, match.index) }}
         />
       );
     }
 
     const type = match[1];
-    
-    if (type === 'AMP_SURVEY') {
+
+    if (type === "AMP_SURVEY") {
       const question = match[2];
-      const options = match[3].split(',').map(s => s.trim());
+      const options = match[3].split(",").map((s) => s.trim());
       parts.push(
-        <AmpSurveyPreview 
-          key={`amp-${match.index}`} 
-          campaignId={campaignId} 
-          contactId={contactId} 
-          question={question} 
-          options={options} 
+        <AmpSurveyPreview
+          key={`amp-${match.index}`}
+          campaignId={campaignId}
+          contactId={contactId}
+          question={question}
+          options={options}
         />
       );
-    } else if (type === 'AMP_PRODUCT') {
+    } else if (type === "AMP_PRODUCT") {
       const productName = match[2];
-      const [price, buttonText] = match[3].split('|').map(s => s.trim());
+      const [price, buttonText] = match[3].split("|").map((s) => s.trim());
       parts.push(
-        <AmpProductPreview 
-          key={`amp-${match.index}`} 
-          campaignId={campaignId} 
-          contactId={contactId} 
-          productName={productName} 
+        <AmpProductPreview
+          key={`amp-${match.index}`}
+          campaignId={campaignId}
+          contactId={contactId}
+          productName={productName}
           price={price}
-          buttonText={buttonText || 'Buy Now'}
+          buttonText={buttonText || "Buy Now"}
         />
       );
-    } else if (type === 'REFERRAL_WIDGET') {
-      parts.push(
-        <ReferralWidgetPreview 
-          key={`ref-${match.index}`} 
-          contact={contact}
-        />
-      );
+    } else if (type === "REFERRAL_WIDGET") {
+      parts.push(<ReferralWidgetPreview key={`ref-${match.index}`} contact={contact} />);
     }
 
     lastIndex = widgetRegex.lastIndex;
@@ -88,10 +96,10 @@ export const ContentRenderer = ({ content, campaignId, contactId, contact, class
   // Add the remaining HTML
   if (lastIndex < processedContent.length) {
     parts.push(
-      <div 
-        key={`html-${lastIndex}`} 
+      <div
+        key={`html-${lastIndex}`}
         className={className}
-        dangerouslySetInnerHTML={{ __html: processedContent.substring(lastIndex) }} 
+        dangerouslySetInnerHTML={{ __html: processedContent.substring(lastIndex) }}
       />
     );
   }
